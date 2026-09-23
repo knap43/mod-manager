@@ -6,17 +6,22 @@ import pytest
 from modmanager.core.instance import Instance
 
 
-def make_plugin(path: Path, masters=(), master=False, light=False) -> Path:
-    """Write a minimal TES4 plugin header."""
+def make_plugin(path: Path, masters=(), master=False, light=False, records=(), description="") -> Path:
+    """Write a TES4 plugin: header, then one GRUP holding empty records with the given FormIDs."""
     sub = b""
     for m in masters:
         data = m.encode("cp1252") + b"\0"
         sub += b"MAST" + struct.pack("<H", len(data)) + data
         sub += b"DATA" + struct.pack("<H", 8) + b"\0" * 8
+    if description:
+        data = description.encode("cp1252") + b"\0"
+        sub += b"SNAM" + struct.pack("<H", len(data)) + data
     flags = (0x1 if master else 0) | (0x200 if light else 0)
     header = b"TES4" + struct.pack("<IIIIHH", len(sub), flags, 0, 0, 44, 0)
+    body = b"".join(b"WEAP" + struct.pack("<IIIIHH", 0, 0, fid, 0, 44, 0) for fid in records)
+    group = b"GRUP" + struct.pack("<I", 24 + len(body)) + b"WEAP" + struct.pack("<iHHI", 0, 0, 0, 0) + body if records else b""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(header + sub)
+    path.write_bytes(header + sub + group)
     return path
 
 

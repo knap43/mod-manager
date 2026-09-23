@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from struct import error as struct_error
 
 from modmanager.core import checks, fomod, paths, proton, script_extender
 from modmanager.core.deploy import Deployer, DeployResult, ProgressFn
@@ -55,6 +56,96 @@ class Manager:
     def fix_master_order(self) -> None:
         entries = fix_master_order(self.plugins())
         assign_load_indices(entries, self.instance.game.supports_light_plugins)
+        self.modlist.save_plugin_order(entries)
+
+    # ------------------------------------------------------------------- LOOT
+
+    @property
+    def loot_userlist(self) -> Path:
+        return self.instance.path / "loot" / "userlist.yaml"
+
+    def loot_metadata(self, update: bool = False) -> "Metadata | None":
+        """Masterlist + userlist, downloading the masterlist first if ``update``."""
+        from modmanager.core.loot.masterlist import Metadata, cache_dir
+        from modmanager.core.loot import masterlist
+
+        repo = self.instance.game.loot_repo
+        if not repo:
+            return None
+        path = masterlist.update(repo) if update else cache_dir(repo) / "masterlist.yaml"
+        if not path.is_file() and not self.loot_userlist.is_file():
+            return None
+        stamp = (path.stat().st_mtime_ns if path.is_file() else 0,
+                 self.loot_userlist.stat().st_mtime_ns if self.loot_userlist.is_file() else 0)
+        cached = getattr(self, "_loot_meta", None)
+        if cached and cached[0] == stamp:
+            return cached[1]
+        meta = Metadata.load(path if path.is_file() else None, self.loot_userlist)
+        self._loot_meta = (stamp, meta)
+        return meta
+
+    def loot_context(self, entries: list[PluginEntry], full: bool = True):
+        """Condition context. ``full`` scans the whole Data folder; otherwise only its
+        top level is used alongside the mods (enough for the frequent Problems refresh)."""
+        from modmanager.core.fomod import resolve_ci
+        from modmanager.core.loot.conditions import Context
+
+        plan = self.modlist.deployment_plan()
+        if full:
+            tracked = set(self.deployer.files)
+            present = {k for k in self.snapshot_data() if k not in tracked} | set(plan)
+        else:
+            present = {n.lower() for n in self.deployer.untracked_root_files()} | set(plan)
+
+        def resolve(rel: str):
+            item = plan.get(rel.lower())
+            if item is not None:
+                return item[1]
+            return resolve_ci(self.instance.data_dir, rel)
+
+        return Context(
+            data_dir=self.instance.data_dir, game_dir=self.instance.game_dir, present=present,
+            active={e.name.lower() for e in entries if e.enabled},
+            masters={e.name.lower() for e in entries if e.is_master}, resolve=resolve,
+        )
+
+    def loot_sort(self, progress=None):
+        """Sort the plugin list like LOOT. Returns (SortResult, sorted entries); nothing is saved."""
+        from modmanager.core.loot import records
+        from modmanager.core.loot.masterlist import MasterlistError, Metadata
+        from modmanager.core.loot.sorter import SortPlugin, sort_plugins
+
+        notes: list[str] = []
+        say = progress or (lambda _msg: None)
+        say("Updating the LOOT masterlist…")
+        try:
+            metadata = self.loot_metadata(update=True)
+        except MasterlistError as exc:
+            metadata = None
+            notes.append(f"{exc} Sorting by plugin data only.")
+        if metadata is None:
+            metadata = Metadata([])
+        entries = self.plugins()
+        movable = [e for e in entries if not e.implicit]
+        sort_input = []
+        for n, e in enumerate(movable):
+            if n % 10 == 0:
+                say(f"Reading plugins… {n}/{len(movable)}")
+            try:
+                recs = records.scan(e.path) if e.path else None
+            except (OSError, ValueError, struct_error) as exc:
+                notes.append(f"Could not read {e.name}: {exc}")
+                recs = None
+            sort_input.append(SortPlugin(e.name, e.is_master, e.masters, metadata.for_plugin(e.name), recs))
+        result = sort_plugins(sort_input, metadata, [e.name for e in entries],
+                              self.loot_context(entries), say)
+        result.notes = notes + result.notes
+        by_name = {e.name.lower(): e for e in entries}
+        new_entries = [e for e in entries if e.implicit] + [by_name[n.lower()] for n in result.order]
+        assign_load_indices(new_entries, self.instance.game.supports_light_plugins)
+        return result, new_entries
+
+    def apply_plugin_order(self, entries: list[PluginEntry]) -> None:
         self.modlist.save_plugin_order(entries)
 
     # --------------------------------------------------------------- problems

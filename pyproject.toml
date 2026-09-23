@@ -10,7 +10,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "GPL-3.0-or-later"
 # Only QtCore/QtGui/QtWidgets/QtSvg are used, so the Essentials wheel is enough.
-dependencies = ["PySide6-Essentials>=6.5"]
+# PyYAML reads LOOT's masterlist.
+dependencies = ["PySide6-Essentials>=6.5", "PyYAML>=5.1"]
 
 [project.optional-dependencies]
 dev = ["pytest"]

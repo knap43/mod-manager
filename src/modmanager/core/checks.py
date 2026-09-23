@@ -7,6 +7,8 @@ a ``fix``; otherwise it may carry a ``url`` to get what is missing.
 
 from __future__ import annotations
 
+import re
+import zlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
@@ -39,6 +41,7 @@ def find_problems(manager: "Manager") -> list[Problem]:
     problems += _plugin_limit(manager, entries)
     problems += _script_extender_problems(manager, plan)
     problems += _nexus_requirements(manager)
+    problems += _loot_problems(manager, entries)
     order = {ERROR: 0, WARNING: 1}
     return sorted(problems, key=lambda p: (order.get(p.severity, 2), p.title.lower()))
 
@@ -211,4 +214,94 @@ def _nexus_requirements(manager: "Manager") -> list[Problem]:
                 "patches or alternatives here; ignore this if you have an equivalent installed.",
                 url=url,
             ))
+    return problems
+
+
+# ------------------------------------------------------------ LOOT metadata
+
+LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+
+
+def _plain(text: str) -> tuple[str, str]:
+    """Markdown to plain text, plus the first link."""
+    m = LINK.search(text)
+    return LINK.sub(r"\1", text).replace("**", "").replace("`", ""), (m.group(2) if m else "")
+
+
+def _message_text(msg: dict) -> str:
+    content = msg.get("content", "")
+    if isinstance(content, list):
+        english = next((c for c in content if isinstance(c, dict) and c.get("lang", "en").startswith("en")), None)
+        content = (english or (content[0] if content else {})).get("text", "")
+    subs = [str(x) for x in msg.get("subs", []) or []]
+    try:
+        return str(content).format(*subs) if subs else str(content)
+    except (IndexError, KeyError, ValueError):
+        return str(content)
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _loot_problems(manager: "Manager", entries: list[PluginEntry]) -> list[Problem]:
+    from modmanager.core.loot import conditions
+
+    try:
+        metadata = manager.loot_metadata(update=False)
+    except Exception:  # noqa: BLE001 - a broken cached masterlist must not break the Problems tab
+        return []
+    if metadata is None or not entries:
+        return []
+    ctx = manager.loot_context(entries, full=False)
+    problems: list[Problem] = []
+    for e in entries:
+        if not e.enabled:
+            continue
+        meta = metadata.for_plugin(e.name)
+        key = e.name.lower()
+        for msg in meta.msg:
+            kind = msg.get("type")
+            if kind not in ("warn", "error") or conditions.evaluate(msg.get("condition"), ctx) is not True:
+                continue
+            text, url = _plain(_message_text(msg))
+            problems.append(Problem(
+                f"loot:msg:{key}:{zlib.crc32(text.encode()):08x}", ERROR if kind == "error" else WARNING,
+                f"{e.name}: {text.splitlines()[0] if text else ''}", text + "\n\n(LOOT masterlist)", url=url,
+            ))
+        if meta.dirty:
+            crc = ctx.crc(e.name)
+            info = next((d for d in meta.dirty if crc is not None and int(d.get("crc", -1)) == crc), None)
+            if info is not None:
+                parts = []
+                if info.get("itm"):
+                    parts.append(_plural(int(info["itm"]), "identical-to-master record"))
+                if info.get("udr"):
+                    parts.append(_plural(int(info["udr"]), "deleted reference"))
+                if info.get("nav"):
+                    parts.append(_plural(int(info["nav"]), "deleted navmesh"))
+                util, url = _plain(str(info.get("util", "xEdit")))
+                detail, _ = _plain(str(info.get("detail", "")))
+                problems.append(Problem(
+                    f"loot:dirty:{key}", WARNING, f"{e.name} is dirty: {', '.join(parts) or 'needs cleaning'}",
+                    f"Clean it with {util}.\n{detail}".strip() + "\n\n(LOOT masterlist)", url=url,
+                ))
+        for ref in meta.inc:
+            if conditions.evaluate(ref.condition, ctx) is True and ref.name.lower() in ctx.active:
+                problems.append(Problem(
+                    f"loot:inc:{key}:{ref.name.lower()}", ERROR,
+                    f"{e.name} is incompatible with {ref.display or ref.name}",
+                    "Disable one of them. (LOOT masterlist)",
+                ))
+        masters = {m.lower() for m in e.masters}
+        for ref in meta.req:
+            if ref.name.lower() in masters:
+                continue  # Reported by the master check already.
+            if conditions.evaluate(ref.condition, ctx) is True and not ctx.exists(ref.name):
+                display, url = _plain(ref.display or ref.name)
+                problems.append(Problem(
+                    f"loot:req:{key}:{ref.name.lower()}", ERROR,
+                    f"{e.name} requires {display}, which is missing",
+                    "(LOOT masterlist)", url=url,
+                ))
     return problems

@@ -47,6 +47,14 @@ through Proton with [umu-launcher](https://github.com/Open-Wine-Components/umu-l
 - **SKSE**: the status bar shows the installed script extender (SKSE64, SKSE, F4SE) and
   whether it matches the game version; its loader is added to the executables, and starting
   the plain game while SKSE plugins are enabled offers to start through SKSE instead.
+- **LOOT sorting** (Plugins tab › **Sort (LOOT)**): a native implementation of LOOT's
+  sorting algorithm using LOOT's community masterlist, downloaded from GitHub and refreshed
+  daily. It honours masters, the masterlist's groups, load-after rules and requirements, and
+  record overlap between plugins (read from the plugin files), and otherwise keeps your current
+  order. You see how many plugins move before applying. Your own rules go in the instance's
+  `loot/userlist.yaml` (**Game › Edit LOOT userlist**), in LOOT's userlist format. The
+  masterlist's warnings, incompatibilities and dirty-plugin notices (matched by checksum, with
+  the cleaning tool linked) appear in the Problems tab.
 - **Problems tab** (dependency detection) with one-click fixes where possible:
   missing masters (pointing at the disabled mod or plugin that provides them), plugins
   loading before their masters, the 254-plugin limit, SKSE plugins without SKSE or with
@@ -151,4 +159,4 @@ deployment, Proton, Steam detection) and `modmanager/ui` (PySide6).
 ## Roadmap
 
 - C# script installers (`script.cs`), which only a few very old mods use
-- Automatic load order sorting (LOOT)
+- LOOT: asset (BSA) overlap as a tie-breaker, and an editor for userlist rules

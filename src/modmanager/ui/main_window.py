@@ -38,6 +38,10 @@ class LogEmitter(QObject):
     message = Signal(str, int)
 
 
+class TextEmitter(QObject):
+    text = Signal(str)
+
+
 class NxmRouter(QObject):
     """Delivers nxm:// links (from the command line or later launches) to the open window."""
 
@@ -73,6 +77,8 @@ class MainWindow(QMainWindow):
         self.process: QProcess | None = None
         self._run_log = None
         self._run_started = 0.0
+        self._text_emitter = TextEmitter()
+        self._text_emitter.text.connect(lambda t: self.busy_label.setText(t) if self.busy else None)
         self.downloads_active: dict[str, dict] = {}
         self.nexus_checking = False
         if nxm_router is not None:
@@ -158,6 +164,11 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addAction("Open game folder", lambda: open_path(self.instance.game_dir))
         m.addAction("Open Data folder", lambda: open_path(self.instance.data_dir))
+        if self.instance.game.loot_repo:
+            m.addSeparator()
+            m.addAction("Sort plugins (LOOT)", self.loot_sort)
+            m.addAction("Update LOOT masterlist", self.loot_update)
+            m.addAction("Edit LOOT userlist…", self.loot_userlist)
 
         m = mb.addMenu("&Proton")
         m.addAction("Wine configuration (winecfg)", lambda: self.run_tool("winecfg"))
@@ -274,6 +285,11 @@ class MainWindow(QMainWindow):
         pr = QHBoxLayout()
         pr.addWidget(self.plugin_filter, 1)
         pr.addWidget(self.plugin_count)
+        self.sort_btn = QPushButton("Sort (LOOT)")
+        self.sort_btn.setToolTip("Sort the load order with LOOT's rules and masterlist")
+        self.sort_btn.clicked.connect(self.loot_sort)
+        self.sort_btn.setVisible(bool(self.instance.game.loot_repo))
+        pr.addWidget(self.sort_btn)
         pv.addLayout(pr)
         self.tabs.addTab(ptab, "Plugins")
         if not self.instance.game.has_plugins:
@@ -1092,6 +1108,75 @@ class MainWindow(QMainWindow):
             return False
         return True
 
+    # ================================================================== LOOT
+
+    def loot_sort(self) -> None:
+        if self.busy or not self.instance.game.loot_repo:
+            return
+        self.set_busy("Sorting plugins…")
+        texts = self._text_emitter
+
+        def work(_progress):
+            return self.manager.loot_sort(texts.text.emit)
+
+        tasks.start(work, self._loot_sorted, self._loot_failed)
+
+    def _loot_failed(self, message: str) -> None:
+        self.set_busy(None)
+        log.error("LOOT sorting failed: %s", message)
+        QMessageBox.warning(self, "Sort plugins", message)
+
+    def _loot_sorted(self, payload) -> None:
+        self.set_busy(None)
+        result, entries = payload
+        for note in result.notes:
+            log.warning("%s", note)
+        before = [e.name for e in self.plugin_model.entries]
+        after = [e.name for e in entries]
+        if before == after:
+            log.info("LOOT: the load order is already sorted")
+            QMessageBox.information(self, "Sort plugins", "The load order is already sorted.")
+            return
+        old_pos = {n: i for i, n in enumerate(before)}
+        changes = [f"{n}: {old_pos.get(n, '?')} → {i}" for i, n in enumerate(after) if old_pos.get(n) != i]
+        box = QMessageBox(QMessageBox.Question, "Sort plugins",
+                          f"Sorting changes the position of {len(changes)} plugin(s). Apply the new load order?",
+                          parent=self)
+        box.setDetailedText("\n".join(changes))
+        apply = box.addButton("Apply", QMessageBox.AcceptRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(apply)
+        box.exec()
+        if box.clickedButton() is not apply:
+            return
+        self.manager.apply_plugin_order(entries)
+        self.refresh_plugins()
+        self._plugins_changed()
+        log.info("LOOT: applied the sorted load order (%d plugins moved)", len(changes))
+
+    def loot_update(self) -> None:
+        from modmanager.core.loot import masterlist
+
+        repo = self.instance.game.loot_repo
+        if self.busy or not repo:
+            return
+        self.set_busy("Updating the LOOT masterlist…")
+
+        def done(path) -> None:
+            self.set_busy(None)
+            self.schedule_problems()
+            log.info("LOOT masterlist: %s", path)
+
+        tasks.start(lambda _p: masterlist.update(repo, force=True), done, self._loot_failed)
+
+    def loot_userlist(self) -> None:
+        path = self.manager.loot_userlist
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(USERLIST_TEMPLATE)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        log.info("LOOT userlist: %s — changes apply to the next sort", path)
+
     # ================================================================= nexus
 
     def _nexus_client(self) -> nexus.NexusClient | None:
@@ -1519,3 +1604,20 @@ def _progress_text(d: dict) -> str:
     if d.get("total"):
         return f"Downloading {100 * d['done'] // d['total']}%"
     return "Downloading…" if d.get("done") else "Starting…"
+
+
+USERLIST_TEMPLATE = """\
+# LOOT userlist: your own sorting rules, applied on top of the masterlist.
+# Same format as LOOT's userlist.yaml. Examples:
+#
+# plugins:
+#   - name: 'My Patch.esp'
+#     after: ['Some Mod.esp']        # load after these plugins
+#   - name: 'Some Overhaul.esp'
+#     group: 'Late Loaders'          # one of the masterlist's groups
+#
+# groups:
+#   - name: 'My Late Group'
+#     after: ['Late Loaders']
+plugins: []
+"""

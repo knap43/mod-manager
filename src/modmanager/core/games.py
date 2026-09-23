@@ -84,6 +84,7 @@ class GameDef:
     data_exts: frozenset[str] = frozenset()
     umu_id_override: str | None = None
     nexus_domain: str | None = None
+    loot_repo: str | None = None  # github.com/loot/<repo> holds the game's masterlist
     script_extender: ScriptExtender | None = None
     extra_executables: tuple[tuple[str, str], ...] = field(default=())
 
@@ -127,6 +128,7 @@ GAMES: dict[str, GameDef] = {
     for g in (
         GameDef(
             id="skyrimse",
+            loot_repo="skyrimse",
             nexus_domain="skyrimspecialedition",
             script_extender=SKSE64,
             name="Skyrim Special Edition",
@@ -146,6 +148,7 @@ GAMES: dict[str, GameDef] = {
         ),
         GameDef(
             id="skyrimse_gog",
+            loot_repo="skyrimse",
             nexus_domain="skyrimspecialedition",
             script_extender=SKSE64,
             name="Skyrim Special Edition (GOG)",
@@ -163,6 +166,7 @@ GAMES: dict[str, GameDef] = {
         ),
         GameDef(
             id="skyrim",
+            loot_repo="skyrim",
             nexus_domain="skyrim",
             script_extender=SKSE_LE,
             name="Skyrim (Legendary Edition)",
@@ -179,6 +183,7 @@ GAMES: dict[str, GameDef] = {
         ),
         GameDef(
             id="fallout4",
+            loot_repo="fallout4",
             nexus_domain="fallout4",
             script_extender=F4SE,
             name="Fallout 4",

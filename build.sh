@@ -40,7 +40,7 @@ EOF
 cmd_deps() {
   need pacman "this command is for Arch Linux and derivatives"
   msg "Installing required packages"
-  sudo pacman -S --needed python pyside6 python-build python-installer python-setuptools \
+  sudo pacman -S --needed python pyside6 python-yaml python-build python-installer python-setuptools \
     python-wheel python-pytest base-devel
   # Optional: umu-launcher runs games through Proton, 7zip extracts archives faster
   # than bsdtar, fuse2 lets AppImages mount.
