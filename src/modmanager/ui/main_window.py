@@ -20,7 +20,7 @@ from modmanager import APP_NAME, __version__
 from modmanager.core import archives, fomod, proton
 from modmanager.core.games import detect_store
 from modmanager.core.installer import Installer, detect_data_root, guess_info
-from modmanager.core.instance import Instance, InstanceRegistry
+from modmanager.core.instance import Executable, Instance, InstanceRegistry
 from modmanager.core.manager import Manager
 from modmanager.core.modlist import ModList
 from modmanager.ui import tasks, theme
@@ -91,6 +91,9 @@ class MainWindow(QMainWindow):
         self.dirty = self.manager.needs_deploy()
         self._update_status()
         self._startup_checks()
+        self.refresh_script_extender()
+        if self.manager.ensure_script_extender_executable():
+            self.refresh_executables()
 
     @property
     def instance(self) -> Instance:
@@ -342,9 +345,23 @@ class MainWindow(QMainWindow):
         self.progress.setFixedWidth(220)
         self.progress.hide()
         self.busy_label = QLabel()
+        self.se_label = QLabel()
         sb.addWidget(self.deploy_label, 1)
         sb.addPermanentWidget(self.busy_label)
         sb.addPermanentWidget(self.progress)
+        sb.addPermanentWidget(self.se_label)
+
+    def refresh_script_extender(self) -> None:
+        status = self.manager.script_extender_status(refresh=True)
+        if status is None:
+            self.se_label.hide()
+            return
+        ok = status.installed and status.compatible is not False
+        color = theme.GOOD if ok else (theme.BAD if status.installed else theme.TEXT_DIM)
+        self.se_label.setText(status.summary())
+        self.se_label.setStyleSheet(f"color: {color};")
+        self.se_label.setToolTip(status.details())
+        self.se_label.show()
 
     # ================================================================ refresh
 
@@ -841,6 +858,9 @@ class MainWindow(QMainWindow):
         if not Path(exe.path).exists():
             QMessageBox.warning(self, "Run", f"Program not found:\n{exe.path}")
             return
+        exe = self._offer_script_extender(exe)
+        if exe is None:
+            return
         try:
             self.manager.launch_spec(exe)  # Validate Proton settings before deploying.
         except proton.ProtonError as exc:
@@ -854,6 +874,48 @@ class MainWindow(QMainWindow):
 
         self.set_busy(f"Deploying before starting {exe.name}…")
         tasks.start(work, lambda r: self._launch(exe.name, *r), self._task_failed, self._progress)
+
+    def _offer_script_extender(self, exe):
+        """Starting the plain game with script extender plugins enabled silently skips them."""
+        status = self.manager.script_extender_status(refresh=True)
+        binary = self.instance.game.binary
+        if status is None or not binary or Path(exe.path).name.lower() != binary.lower():
+            return exe
+        dlls = self.manager.enabled_script_extender_plugins()
+        if not dlls:
+            return exe
+        name = status.extender.name
+        if not status.installed:
+            answer = QMessageBox.warning(
+                self, name,
+                f"{len(dlls)} enabled {name} plugin(s) will not load because {name} is not installed "
+                f"in the game folder.\n\nGet it from {status.extender.url}\n\nStart the game anyway?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            return exe if answer == QMessageBox.Yes else None
+        box = QMessageBox(QMessageBox.Question, name,
+                          f"{len(dlls)} {name} plugin(s) are enabled, but {exe.name} starts the game "
+                          f"without {name}, so they will not load.", parent=self)
+        use_se = box.addButton(f"Start with {name}", QMessageBox.AcceptRole)
+        box.addButton("Start without", QMessageBox.DestructiveRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(use_se)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is use_se:
+            exes = self.instance.executables
+            match = next((i for i, e in enumerate(exes) if Path(e.path) == status.loader), None)
+            if match is None:
+                exes.insert(0, Executable(name, str(status.loader)))
+                self.instance.executables = exes
+                match = 0
+            self.instance.config["selected_executable"] = match
+            self.instance.save()
+            self.refresh_executables()
+            return self.instance.executables[match]
+        if clicked is box.button(QMessageBox.Cancel):
+            return None
+        return exe
 
     def run_tool(self, tool: str, args: list[str] | None = None) -> None:
         if self.busy or self.process is not None:
@@ -994,6 +1056,9 @@ class MainWindow(QMainWindow):
 
     def _settings_applied(self) -> None:
         self.set_busy(None)
+        self.refresh_script_extender()
+        if self.manager.ensure_script_extender_executable():
+            self.refresh_executables()
         self.refresh_all(rescan=False)
         self.dirty = self.manager.needs_deploy()
         self._update_status()

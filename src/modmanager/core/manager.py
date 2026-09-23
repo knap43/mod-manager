@@ -6,7 +6,7 @@ import logging
 import os
 from pathlib import Path
 
-from modmanager.core import fomod, paths, proton
+from modmanager.core import fomod, paths, proton, script_extender
 from modmanager.core.deploy import Deployer, DeployResult, ProgressFn
 from modmanager.core.instance import Executable, Instance
 from modmanager.core.modlist import ModList
@@ -137,10 +137,42 @@ class Manager:
                 return "Inactive" if is_plugin_name(key) else "Active"
             return "Missing"
 
+        se = self.script_extender_status(refresh=True)
         binary = self.instance.game.binary
         exe = paths.find_child_ci(self.instance.game_dir, binary) if binary else None
-        version = fomod.pe_file_version(exe) if exe else None
-        return fomod.FomodContext(file_state=state, game_version=version)
+        version = se.game_version if se else (fomod.pe_file_version(exe) if exe else None)
+        return fomod.FomodContext(file_state=state, game_version=version,
+                                  script_extender_version=se.version if se and se.installed else None)
+
+    # -------------------------------------------------------- script extender
+
+    def script_extender_status(self, refresh: bool = False) -> script_extender.ScriptExtenderStatus | None:
+        if refresh or not hasattr(self, "_se_status"):
+            self._se_status = script_extender.check(self.instance.game, self.instance.game_dir)
+        return self._se_status
+
+    def ensure_script_extender_executable(self) -> bool:
+        """Add the script extender loader to the executables once, selected by default."""
+        status = self.script_extender_status()
+        if status is None or not status.installed:
+            return False
+        exes = self.instance.executables
+        loader = str(status.loader)
+        if any(Path(e.path) == status.loader for e in exes) or self.instance.config.get("se_added") == loader:
+            return False
+        exes.insert(0, Executable(status.extender.name, loader))
+        self.instance.executables = exes
+        self.instance.config["selected_executable"] = 0
+        self.instance.config["se_added"] = loader  # Don't re-add it if the user removes it.
+        self.instance.save()
+        log.info("Added %s to the executables", status.extender.name)
+        return True
+
+    def enabled_script_extender_plugins(self) -> list[str]:
+        se = self.instance.game.script_extender
+        if se is None:
+            return []
+        return script_extender.plugin_dlls(set(self.modlist.deployment_plan()), se)
 
     # ---------------------------------------------------------------- running
 

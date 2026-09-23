@@ -46,6 +46,19 @@ def detect_store(game_dir: Path) -> str | None:
 
 
 @dataclass(frozen=True)
+class ScriptExtender:
+    name: str                 # e.g. "SKSE64"
+    loader: str               # executable in the game folder
+    dll_prefix: str           # runtime DLLs are named <prefix><major>_<minor>_<build>.dll
+    plugins_dir: str          # Data-relative folder holding its plugin DLLs
+    url: str                  # where to get it
+    nexus_id: int | None = None
+    # Address Library for SKSE Plugins: most SKSE64 plugins need its data file
+    # for the running game version.
+    address_library_id: int | None = None
+
+
+@dataclass(frozen=True)
 class GameDef:
     id: str
     name: str
@@ -70,6 +83,8 @@ class GameDef:
     data_dirs: frozenset[str] = frozenset()
     data_exts: frozenset[str] = frozenset()
     umu_id_override: str | None = None
+    nexus_domain: str | None = None
+    script_extender: ScriptExtender | None = None
     extra_executables: tuple[tuple[str, str], ...] = field(default=())
 
     @property
@@ -92,6 +107,19 @@ class GameDef:
         return self.plugin_format is not None
 
 
+SKSE64 = ScriptExtender(
+    name="SKSE64", loader="skse64_loader.exe", dll_prefix="skse64_", plugins_dir="SKSE/Plugins",
+    url="https://skse.silverlock.org/", nexus_id=30379, address_library_id=32444,
+)
+SKSE_LE = ScriptExtender(
+    name="SKSE", loader="skse_loader.exe", dll_prefix="skse_", plugins_dir="SKSE/Plugins",
+    url="https://skse.silverlock.org/",
+)
+F4SE = ScriptExtender(
+    name="F4SE", loader="f4se_loader.exe", dll_prefix="f4se_", plugins_dir="F4SE/Plugins",
+    url="https://f4se.silverlock.org/", nexus_id=42147,
+)
+
 SKYRIM_SE_MASTERS = ("Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm")
 
 GAMES: dict[str, GameDef] = {
@@ -99,6 +127,8 @@ GAMES: dict[str, GameDef] = {
     for g in (
         GameDef(
             id="skyrimse",
+            nexus_domain="skyrimspecialedition",
+            script_extender=SKSE64,
             name="Skyrim Special Edition",
             steam_app_id=489830,
             steam_dir="Skyrim Special Edition",
@@ -116,6 +146,8 @@ GAMES: dict[str, GameDef] = {
         ),
         GameDef(
             id="skyrimse_gog",
+            nexus_domain="skyrimspecialedition",
+            script_extender=SKSE64,
             name="Skyrim Special Edition (GOG)",
             binary="SkyrimSE.exe",
             launcher="SkyrimSELauncher.exe",
@@ -131,6 +163,8 @@ GAMES: dict[str, GameDef] = {
         ),
         GameDef(
             id="skyrim",
+            nexus_domain="skyrim",
+            script_extender=SKSE_LE,
             name="Skyrim (Legendary Edition)",
             steam_app_id=72850,
             steam_dir="Skyrim",
@@ -145,6 +179,8 @@ GAMES: dict[str, GameDef] = {
         ),
         GameDef(
             id="fallout4",
+            nexus_domain="fallout4",
+            script_extender=F4SE,
             name="Fallout 4",
             steam_app_id=377160,
             steam_dir="Fallout 4",
