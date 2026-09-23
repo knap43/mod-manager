@@ -6,11 +6,11 @@ import logging
 import os
 from pathlib import Path
 
-from modmanager.core import fomod, paths, proton, script_extender
+from modmanager.core import checks, fomod, paths, proton, script_extender
 from modmanager.core.deploy import Deployer, DeployResult, ProgressFn
 from modmanager.core.instance import Executable, Instance
 from modmanager.core.modlist import ModList
-from modmanager.core.plugins import PluginEntry, is_plugin_name
+from modmanager.core.plugins import PluginEntry, assign_load_indices, fix_master_order, is_plugin_name
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +43,34 @@ class Manager:
 
     def plugins(self) -> list[PluginEntry]:
         return self.modlist.plugin_entries(self.deployer.untracked_root_files())
+
+    def set_plugins_enabled(self, names: list[str], enabled: bool) -> None:
+        wanted = {n.lower() for n in names}
+        entries = self.plugins()
+        for e in entries:
+            if e.name.lower() in wanted and not e.implicit:
+                e.enabled = enabled
+        self.modlist.save_plugin_order(entries)
+
+    def fix_master_order(self) -> None:
+        entries = fix_master_order(self.plugins())
+        assign_load_indices(entries, self.instance.game.supports_light_plugins)
+        self.modlist.save_plugin_order(entries)
+
+    # --------------------------------------------------------------- problems
+
+    def problems(self, include_ignored: bool = False) -> list[checks.Problem]:
+        found = checks.find_problems(self)
+        if include_ignored:
+            return found
+        ignored = set(self.instance.config.get("ignored_problems", []))
+        return [p for p in found if p.key not in ignored]
+
+    def ignore_problem(self, key: str, ignore: bool = True) -> None:
+        ignored = set(self.instance.config.get("ignored_problems", []))
+        (ignored.add if ignore else ignored.discard)(key)
+        self.instance.config["ignored_problems"] = sorted(ignored)
+        self.instance.save()
 
     # ------------------------------------------------------------- deployment
 

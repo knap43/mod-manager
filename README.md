@@ -47,6 +47,12 @@ through Proton with [umu-launcher](https://github.com/Open-Wine-Components/umu-l
 - **SKSE**: the status bar shows the installed script extender (SKSE64, SKSE, F4SE) and
   whether it matches the game version; its loader is added to the executables, and starting
   the plain game while SKSE plugins are enabled offers to start through SKSE instead.
+- **Problems tab** (dependency detection) with one-click fixes where possible:
+  missing masters (pointing at the disabled mod or plugin that provides them), plugins
+  loading before their masters, the 254-plugin limit, SKSE plugins without SKSE or with
+  the wrong SKSE build, a missing Address Library for your game version, and requirements
+  listed on Nexus Mods that are not installed or disabled. Problems can be ignored
+  individually. **Run** warns before starting the game with problems that crash it.
 - **Installing** from archives (zip natively; 7z/rar through 7-Zip, `bsdtar` or `unrar`)
   or folders, with automatic detection of the folder that maps onto `Data`.
   Nexus-style file names (`Name-1234-1-0-1700000000.7z`) give the mod's name,
@@ -145,4 +151,4 @@ deployment, Proton, Steam detection) and `modmanager/ui` (PySide6).
 ## Roadmap
 
 - C# script installers (`script.cs`), which only a few very old mods use
-- Automatic load order sorting (LOOT) and dependency detection
+- Automatic load order sorting (LOOT)

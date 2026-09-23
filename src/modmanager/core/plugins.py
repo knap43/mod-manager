@@ -180,3 +180,23 @@ def assign_load_indices(entries: list[PluginEntry], light_supported: bool) -> No
         else:
             e.load_index = f"{full:02X}"
             full += 1
+
+
+def fix_master_order(entries: list[PluginEntry]) -> list[PluginEntry]:
+    """Move plugins after their masters, keeping the rest of the order unchanged."""
+    order = list(entries)
+    for _ in range(len(order) * len(order) + 1):  # Bounded: circular masters can't loop forever.
+        pos = {e.name.lower(): i for i, e in enumerate(order)}
+        moved = False
+        for i, e in enumerate(order):
+            if e.implicit:
+                continue
+            later = [pos[m.lower()] for m in e.masters if pos.get(m.lower(), -1) > i]
+            if later:
+                item = order.pop(i)
+                order.insert(max(later), item)  # Right after its last master (indices shifted by the pop).
+                moved = True
+                break
+        if not moved:
+            break
+    return partition_masters(order)

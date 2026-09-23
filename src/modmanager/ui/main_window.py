@@ -7,17 +7,17 @@ import shutil
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QModelIndex, QObject, QProcess, QProcessEnvironment, QSettings, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QModelIndex, QObject, QProcess, QProcessEnvironment, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence, QTextCharFormat
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
     QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
     QSizePolicy, QSplitter, QTabWidget, QToolButton, QTreeView, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget,
 )
 
 from modmanager import APP_NAME, __version__
-from modmanager.core import archives, fomod, nexus, nexus_tasks, proton
+from modmanager.core import archives, checks, fomod, nexus, nexus_tasks, proton
 from modmanager.core.games import detect_store
 from modmanager.core.installer import Installer, detect_data_root, guess_info
 from modmanager.core.instance import Executable, Instance, InstanceRegistry
@@ -306,6 +306,47 @@ class MainWindow(QMainWindow):
         drow.addWidget(self._hint_label("Drop archives onto the window to install them."))
         dv.addLayout(drow)
         self.tabs.addTab(dtab, "Downloads")
+
+        # Problems tab
+        ptab2 = QWidget()
+        qv = QVBoxLayout(ptab2)
+        qv.setContentsMargins(4, 4, 4, 4)
+        self.problem_list = QTreeWidget()
+        self.problem_list.setRootIsDecorated(False)
+        self.problem_list.setAlternatingRowColors(True)
+        self.problem_list.setHeaderLabels(["", "Problem"])
+        self.problem_list.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.problem_list.header().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.problem_list.currentItemChanged.connect(lambda *_: self._problem_selected())
+        qv.addWidget(self.problem_list, 3)
+        self.problem_detail = QLabel()
+        self.problem_detail.setWordWrap(True)
+        self.problem_detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.problem_detail.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.problem_detail.setMinimumHeight(70)
+        qv.addWidget(self.problem_detail, 1)
+        prow = QHBoxLayout()
+        self.problem_fix = QPushButton("Fix")
+        self.problem_fix.setObjectName("primary")
+        self.problem_fix.clicked.connect(self._fix_problem)
+        self.problem_url = QPushButton("Open page")
+        self.problem_url.clicked.connect(self._open_problem_url)
+        self.problem_ignore = QPushButton("Ignore")
+        self.problem_ignore.clicked.connect(self._ignore_problem)
+        self.show_ignored = QCheckBox("Show ignored")
+        self.show_ignored.toggled.connect(lambda _on: self.refresh_problems())
+        for w in (self.problem_fix, self.problem_url, self.problem_ignore):
+            prow.addWidget(w)
+        prow.addStretch(1)
+        prow.addWidget(self.show_ignored)
+        qv.addLayout(prow)
+        self.tabs.addTab(ptab2, "Problems")
+        self.problems_tab = ptab2
+        self._problems: dict[str, object] = {}
+        self._problem_timer = QTimer(self)
+        self._problem_timer.setSingleShot(True)
+        self._problem_timer.setInterval(250)
+        self._problem_timer.timeout.connect(self.refresh_problems)
         rv.addWidget(self.tabs, 1)
 
         bar = QHBoxLayout()
@@ -409,6 +450,7 @@ class MainWindow(QMainWindow):
             entries = []
         self.plugin_model.set_entries(entries, self.modlist)
         self._apply_plugin_filter()
+        self.schedule_problems()
 
     def refresh_downloads(self) -> None:
         self.downloads.clear()
@@ -491,6 +533,7 @@ class MainWindow(QMainWindow):
     def _plugins_changed(self) -> None:
         self.dirty = True
         self._update_status()
+        self.schedule_problems()
 
     def _mod_selected(self, current: QModelIndex, _prev) -> None:
         mod = self.mod_model.mod_at(current.row()) if current.isValid() else None
@@ -935,6 +978,11 @@ class MainWindow(QMainWindow):
         exe = self._offer_script_extender(exe)
         if exe is None:
             return
+        launches_game = Path(exe.path).name.lower() in {
+            n.lower() for n in (self.instance.game.binary, self.instance.game.script_extender
+                                and self.instance.game.script_extender.loader) if n}
+        if launches_game and not self._crash_risks():
+            return
         try:
             self.manager.launch_spec(exe)  # Validate Proton settings before deploying.
         except proton.ProtonError as exc:
@@ -948,6 +996,101 @@ class MainWindow(QMainWindow):
 
         self.set_busy(f"Deploying before starting {exe.name}…")
         tasks.start(work, lambda r: self._launch(exe.name, *r), self._task_failed, self._progress)
+
+    # ============================================================== problems
+
+    def schedule_problems(self) -> None:
+        if hasattr(self, "_problem_timer"):
+            self._problem_timer.start()
+
+    def refresh_problems(self) -> None:
+        try:
+            shown = self.manager.problems(include_ignored=self.show_ignored.isChecked())
+            active = self.manager.problems() if self.show_ignored.isChecked() else shown
+        except OSError as exc:
+            log.error("Could not check for problems: %s", exc)
+            return
+        ignored = set(self.instance.config.get("ignored_problems", []))
+        current = self.problem_list.currentItem()
+        current_key = current.data(0, Qt.UserRole) if current else None
+        self.problem_list.clear()
+        self._problems = {p.key: p for p in shown}
+        for p in shown:
+            item = QTreeWidgetItem(["Error" if p.severity == checks.ERROR else "Warning", p.title])
+            item.setData(0, Qt.UserRole, p.key)
+            item.setForeground(0, QColor(theme.BAD if p.severity == checks.ERROR else theme.WARN))
+            if p.key in ignored:
+                for c in (0, 1):
+                    item.setForeground(c, QColor(theme.TEXT_DIM))
+                item.setText(1, p.title + "  (ignored)")
+            self.problem_list.addTopLevelItem(item)
+            if p.key == current_key:
+                self.problem_list.setCurrentItem(item)
+        errors = sum(1 for p in active if p.severity == checks.ERROR)
+        index = self.tabs.indexOf(self.problems_tab)
+        self.tabs.setTabText(index, f"Problems ({len(active)})" if active else "Problems")
+        self.tabs.tabBar().setTabTextColor(index, QColor(theme.BAD if errors else (theme.WARN if active else theme.TEXT)))
+        if self.problem_list.currentItem() is None and self.problem_list.topLevelItemCount():
+            self.problem_list.setCurrentItem(self.problem_list.topLevelItem(0))
+        self._problem_selected()
+
+    def _selected_problem(self):
+        item = self.problem_list.currentItem()
+        return self._problems.get(item.data(0, Qt.UserRole)) if item else None
+
+    def _problem_selected(self) -> None:
+        p = self._selected_problem()
+        self.problem_detail.setText(p.detail if p else "No problems found.")
+        self.problem_fix.setEnabled(bool(p and p.fix))
+        self.problem_fix.setText(p.fix_label if p and p.fix else "Fix")
+        self.problem_url.setEnabled(bool(p and p.url))
+        ignored = p is not None and p.key in set(self.instance.config.get("ignored_problems", []))
+        self.problem_ignore.setEnabled(p is not None)
+        self.problem_ignore.setText("Don't ignore" if ignored else "Ignore")
+
+    def _fix_problem(self) -> None:
+        p = self._selected_problem()
+        if p is None or p.fix is None:
+            return
+        try:
+            p.fix()
+        except OSError as exc:
+            QMessageBox.warning(self, "Fix", str(exc))
+        log.info("Fixed: %s", p.title)
+        self.mod_model.reset()
+        self._apply_mod_filter()
+        self._mods_changed()
+
+    def _open_problem_url(self) -> None:
+        p = self._selected_problem()
+        if p and p.url:
+            QDesktopServices.openUrl(QUrl(p.url))
+
+    def _ignore_problem(self) -> None:
+        p = self._selected_problem()
+        if p is None:
+            return
+        ignored = p.key in set(self.instance.config.get("ignored_problems", []))
+        self.manager.ignore_problem(p.key, not ignored)
+        self.refresh_problems()
+
+    def _crash_risks(self) -> bool:
+        """Warn before starting the game with problems that make it crash. True to continue."""
+        risks = [p for p in self.manager.problems()
+                 if p.severity == checks.ERROR and p.key.split(":")[0] in ("master", "order", "limit")]
+        if not risks:
+            return True
+        text = "\n".join(f"• {p.title}" for p in risks[:8])
+        box = QMessageBox(QMessageBox.Warning, "Problems",
+                          f"The game will probably crash at startup:\n\n{text}", parent=self)
+        box.addButton("Start anyway", QMessageBox.DestructiveRole)
+        show = box.addButton("Show problems", QMessageBox.AcceptRole)
+        box.setDefaultButton(show)
+        box.exec()
+        if box.clickedButton() is show:
+            self.tabs.setCurrentWidget(self.problems_tab)
+            return False
+        return True
 
     # ================================================================= nexus
 
@@ -1080,6 +1223,7 @@ class MainWindow(QMainWindow):
     def _mods_changed_quiet(self) -> None:
         """Refresh views after metadata changed without touching the deployment state."""
         self._update_status()
+        self.schedule_problems()
 
     def _offer_script_extender(self, exe):
         """Starting the plain game with script extender plugins enabled silently skips them."""

@@ -12,6 +12,7 @@ from modmanager.core.instance import Instance, Profile, sanitize_name
 from modmanager.core.plugins import (
     PluginEntry,
     assign_load_indices,
+    fix_master_order,
     format_order_file,
     is_plugin_name,
     merge_saved_order,
@@ -326,7 +327,9 @@ class ModList:
             entry.implicit = entry.name.lower() in implicit
 
         saved = read_order_file(self.profile.plugins_file)
-        ordered_names = merge_saved_order(saved, [e.name for e in available.values()])
+        present = sorted((e.name for e in available.values()), key=str.lower)
+        ordered_names = merge_saved_order(saved, present)
+        known = {n.lower() for n, _ in saved}
         entries: list[PluginEntry] = []
         for name, enabled in ordered_names:
             entry = available[name.lower()]
@@ -336,7 +339,9 @@ class ModList:
         rank = {name: i for i, name in enumerate(implicit)}
         implicit_entries = sorted((e for e in entries if e.implicit), key=lambda e: rank[e.name.lower()])
         entries = implicit_entries + [e for e in entries if not e.implicit]
-        entries = partition_masters(entries)
+        has_new = any(e.name.lower() not in known and not e.implicit for e in entries)
+        # Newly added plugins go at the end; make sure none lands before its own masters.
+        entries = fix_master_order(entries) if has_new else partition_masters(entries)
         assign_load_indices(entries, game.supports_light_plugins)
         return entries
 
