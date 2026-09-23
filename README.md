@@ -37,6 +37,16 @@ through Proton with [umu-launcher](https://github.com/Open-Wine-Components/umu-l
   plugins or game version, and conditional file installs. Your choices are remembered
   and preselected when you reinstall or update the mod. **Manual…** falls back to
   picking the files yourself.
+- **Nexus Mods**: enter your personal API key under Settings › Nexus and let the program
+  handle `nxm://` links; "Mod Manager Download" buttons then download into the Downloads
+  tab, and mods installed from there remember their Nexus mod and file. **Nexus › Check for
+  updates** marks outdated mods (`1.2 ↑ 1.3` in the Version column) and fetches each mod's
+  listed requirements; after the first run it only re-queries mods Nexus reports as updated,
+  to stay within the API's rate limits. Mods from other archives can be matched by checksum
+  with **Identify on Nexus Mods**.
+- **SKSE**: the status bar shows the installed script extender (SKSE64, SKSE, F4SE) and
+  whether it matches the game version; its loader is added to the executables, and starting
+  the plain game while SKSE plugins are enabled offers to start through SKSE instead.
 - **Installing** from archives (zip natively; 7z/rar through 7-Zip, `bsdtar` or `unrar`)
   or folders, with automatic detection of the folder that maps onto `Data`.
   Nexus-style file names (`Name-1234-1-0-1700000000.7z`) give the mod's name,
@@ -134,7 +144,5 @@ deployment, Proton, Steam detection) and `modmanager/ui` (PySide6).
 
 ## Roadmap
 
-- Nexus Mods integration (`nxm://` links, downloads, update checks)
-- SKSE detection
 - C# script installers (`script.cs`), which only a few very old mods use
 - Automatic load order sorting (LOOT) and dependency detection

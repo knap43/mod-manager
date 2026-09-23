@@ -76,7 +76,8 @@ class Mod:
         self._files = None
 
     def save_meta(self) -> None:
-        paths.write_json(self.path / META_FILE, self.meta)
+        if self.path.is_dir():  # A background task may finish after the mod was removed.
+            paths.write_json(self.path / META_FILE, self.meta)
 
 
 @dataclass

@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from modmanager import APP_NAME, __version__
-from modmanager.core import archives, fomod, proton
+from modmanager.core import archives, fomod, nexus, nexus_tasks, proton
 from modmanager.core.games import detect_store
 from modmanager.core.installer import Installer, detect_data_root, guess_info
 from modmanager.core.instance import Executable, Instance, InstanceRegistry
@@ -36,6 +36,15 @@ LOG_COLORS = {logging.DEBUG: theme.TEXT_DIM, logging.WARNING: theme.WARN, loggin
 
 class LogEmitter(QObject):
     message = Signal(str, int)
+
+
+class NxmRouter(QObject):
+    """Delivers nxm:// links (from the command line or later launches) to the open window."""
+
+    link = Signal(str)
+
+
+nxm_router: NxmRouter | None = None
 
 
 class QtLogHandler(logging.Handler):
@@ -64,6 +73,10 @@ class MainWindow(QMainWindow):
         self.process: QProcess | None = None
         self._run_log = None
         self._run_started = 0.0
+        self.downloads_active: dict[str, dict] = {}
+        self.nexus_checking = False
+        if nxm_router is not None:
+            nxm_router.link.connect(self.handle_nxm)
         self.busy = False
         self.dirty = False
         self.settings = QSettings("modmanager", "modmanager")
@@ -153,6 +166,17 @@ class MainWindow(QMainWindow):
         m.addAction("Open Wine prefix folder", self.open_prefix)
         m.addAction("Open plugins.txt folder", self.open_plugin_dir)
         m.addAction("Open My Games folder", self.open_my_games)
+
+        m = mb.addMenu("&Nexus")
+        domain = self.instance.game.nexus_domain
+        m.setEnabled(bool(domain))
+        m.addAction("Check for updates", lambda: self.nexus_check(force=False))
+        m.addAction("Check every mod again", lambda: self.nexus_check(force=True))
+        m.addSeparator()
+        if domain:
+            m.addAction("Open game page on Nexus Mods",
+                        lambda: QDesktopServices.openUrl(QUrl(f"{nexus.SITE_URL}/{domain}")))
+        m.addAction("Nexus settings…", self.edit_settings)
 
         m = mb.addMenu("&Help")
         m.addAction("About", self.about)
@@ -264,7 +288,9 @@ class MainWindow(QMainWindow):
         self.downloads.setAlternatingRowColors(True)
         self.downloads.setHeaderLabels(["Archive", "Size", "Status"])
         self.downloads.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.downloads.itemDoubleClicked.connect(lambda item, _c: self.install_archive(Path(item.data(0, Qt.UserRole))))
+        self.downloads.itemDoubleClicked.connect(self._download_activated)
+        self.downloads.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.downloads.customContextMenuRequested.connect(self._downloads_menu)
         dv.addWidget(self.downloads, 1)
         drow = QHBoxLayout()
         b = QPushButton("Install")
@@ -386,6 +412,13 @@ class MainWindow(QMainWindow):
 
     def refresh_downloads(self) -> None:
         self.downloads.clear()
+        for key, d in self.downloads_active.items():
+            item = QTreeWidgetItem([d["label"], _size(d["total"]), _progress_text(d)])
+            item.setData(0, Qt.UserRole, "")
+            item.setData(0, Qt.UserRole + 1, key)
+            item.setForeground(2, QColor(theme.ACCENT_BORDER))
+            item.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+            self.downloads.addTopLevelItem(item)
         installed = {str(m.meta.get("source", "")) for m in self.modlist.mods}
         folder = self.instance.downloads_dir
         files = sorted((p for p in folder.iterdir() if p.is_file() and archives.is_archive(p)),
@@ -480,6 +513,14 @@ class MainWindow(QMainWindow):
             if not mod.is_separator:
                 m.addAction("Show conflicts…", self.show_conflicts)
             m.addAction("Open folder", lambda: open_path(mod.path))
+            domain = self.instance.game.nexus_domain
+            if domain and mod.meta.get("nexus_id"):
+                game = mod.meta.get("nexus_game", domain)
+                m.addAction("Visit on Nexus Mods", lambda: QDesktopServices.openUrl(
+                    QUrl(nexus.mod_url(game, int(mod.meta["nexus_id"])))))
+                m.addAction("Check for update", lambda: self.nexus_check(force=True, only=[mod.name]))
+            elif domain and not mod.is_separator and not mod.is_overwrite and Path(mod.meta.get("source", "")).is_file():
+                m.addAction("Identify on Nexus Mods", lambda: self.nexus_identify(mod.name))
             if not mod.is_overwrite:
                 m.addAction("Rename…", self.rename_mod)
             elif mod.files():
@@ -689,9 +730,35 @@ class MainWindow(QMainWindow):
             self.install_archive(Path(folder))
 
     def _install_selected_download(self) -> None:
-        item = self.downloads.currentItem()
-        if item is not None:
+        self._download_activated(self.downloads.currentItem())
+
+    def _download_activated(self, item, _column: int = 0) -> None:
+        if item is not None and item.data(0, Qt.UserRole):
             self.install_archive(Path(item.data(0, Qt.UserRole)))
+
+    def _downloads_menu(self, pos) -> None:
+        item = self.downloads.itemAt(pos)
+        if item is None:
+            return
+        m = QMenu(self)
+        key = item.data(0, Qt.UserRole + 1)
+        if key:
+            m.addAction("Cancel download", lambda: self.downloads_active.get(key, {}).update(cancel=True))
+        else:
+            path = Path(item.data(0, Qt.UserRole))
+            m.addAction("Install", lambda: self.install_archive(path))
+            meta = nexus.read_sidecar(path)
+            if meta.get("mod_id"):
+                m.addAction("Visit on Nexus Mods", lambda: QDesktopServices.openUrl(
+                    QUrl(nexus.mod_url(meta.get("game", ""), int(meta["mod_id"])))))
+            m.addAction("Delete archive…", lambda: self._delete_download(path))
+        m.exec(self.downloads.viewport().mapToGlobal(pos))
+
+    def _delete_download(self, path: Path) -> None:
+        if QMessageBox.question(self, "Delete", f"Delete {path.name}?") == QMessageBox.Yes:
+            path.unlink(missing_ok=True)
+            nexus.sidecar(path).unlink(missing_ok=True)
+            self.refresh_downloads()
 
     def install_archive(self, source: Path) -> None:
         if self.busy:
@@ -798,6 +865,13 @@ class MainWindow(QMainWindow):
             self.mod_view.setCurrentIndex(self.mod_model.index(row, 0))
             self.mod_view.scrollTo(self.mod_model.index(row, 0))
         log.info("Installed '%s' from %s", installed, source.name)
+        mod = self.modlist.get(installed)
+        if mod is not None and mod.meta.get("nexus_id") and nexus.load_api_key() and self.instance.game.nexus_domain:
+            client = nexus.NexusClient(nexus.load_api_key())
+            domain = self.instance.game.nexus_domain
+            tasks.start(lambda _p: nexus_tasks.check_mod(client, mod.meta.get("nexus_game", domain), mod),
+                        lambda _r: (self.mod_model.reset(), self._mods_changed_quiet()),
+                        lambda msg: log.warning("Could not fetch Nexus info for %s: %s", installed, msg))
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls() and not self.busy:
@@ -874,6 +948,138 @@ class MainWindow(QMainWindow):
 
         self.set_busy(f"Deploying before starting {exe.name}…")
         tasks.start(work, lambda r: self._launch(exe.name, *r), self._task_failed, self._progress)
+
+    # ================================================================= nexus
+
+    def _nexus_client(self) -> nexus.NexusClient | None:
+        key = nexus.load_api_key()
+        if not key:
+            if QMessageBox.question(
+                self, "Nexus Mods",
+                "This needs your Nexus Mods API key. Open the settings to enter it?",
+            ) == QMessageBox.Yes:
+                self.edit_settings()
+            key = nexus.load_api_key()
+        return nexus.NexusClient(key) if key else None
+
+    def handle_nxm(self, url: str) -> None:
+        self.raise_()
+        self.activateWindow()
+        try:
+            link = nexus.NxmLink.parse(url)
+        except ValueError as exc:
+            log.error("%s", exc)
+            return
+        domain = self.instance.game.nexus_domain
+        if link.game != domain:
+            QMessageBox.warning(
+                self, "Nexus Mods",
+                f"This link is for the game '{link.game}', but the open instance is "
+                f"{self.instance.game.name}. Switch instances and click the link again.",
+            )
+            return
+        client = self._nexus_client()
+        if client is None:
+            return
+        key = f"{link.mod_id}-{link.file_id}-{time.monotonic()}"
+        entry = {"label": f"Nexus mod {link.mod_id}, file {link.file_id}", "done": 0, "total": 0, "cancel": False}
+        self.downloads_active[key] = entry
+        self.tabs.setCurrentIndex(self.tabs.indexOf(self.downloads.parentWidget()))
+        self.refresh_downloads()
+        log.info("Downloading Nexus mod %s, file %s", link.mod_id, link.file_id)
+
+        def work(progress):
+            return nexus_tasks.download_nxm(
+                client, link, self.instance.downloads_dir, progress,
+                cancelled=lambda: entry["cancel"],
+                on_start=lambda dest: entry.update(label=dest.name),
+            )
+
+        def on_progress(done: int, total: int) -> None:
+            entry.update(done=done, total=total)
+            for i in range(self.downloads.topLevelItemCount()):
+                item = self.downloads.topLevelItem(i)
+                if item.data(0, Qt.UserRole + 1) == key:
+                    item.setText(0, entry["label"])
+                    item.setText(1, _size(total))
+                    item.setText(2, _progress_text(entry))
+
+        def done(path: Path) -> None:
+            self.downloads_active.pop(key, None)
+            self.refresh_downloads()
+            log.info("Downloaded %s — double-click it in Downloads to install", path.name)
+
+        def failed(message: str) -> None:
+            self.downloads_active.pop(key, None)
+            self.refresh_downloads()
+            if message == "Download cancelled":
+                log.info("Download cancelled")
+            else:
+                log.error("Download failed: %s", message)
+                QMessageBox.warning(self, "Nexus Mods", message)
+
+        tasks.start(work, done, failed, on_progress)
+
+    def nexus_check(self, force: bool = False, only: list[str] | None = None) -> None:
+        domain = self.instance.game.nexus_domain
+        if not domain or self.nexus_checking:
+            return
+        client = self._nexus_client()
+        if client is None:
+            return
+        mods = [m for m in self.modlist.mods if (only is None or m.name in only) and m.meta.get("nexus_id")]
+        if not mods:
+            log.info("No mods with a Nexus Mods ID to check. Mods installed from nxm downloads or "
+                     "Nexus-named archives have one; use \"Identify on Nexus Mods\" for others.")
+            return
+        self.nexus_checking = True
+        self.busy_label.setText(f"Checking {len(mods)} mod(s) on Nexus…")
+
+        def done(result: nexus_tasks.CheckResult) -> None:
+            self.nexus_checking = False
+            self.busy_label.setText("")
+            self.mod_model.reset()
+            self._apply_mod_filter()
+            self._mods_changed_quiet()
+            summary = f"Nexus check: {result.checked} checked, {result.skipped} unchanged since the last check"
+            if result.updates:
+                summary += f"; updates for {', '.join(result.updates)}"
+            log.info("%s", summary)
+            for err in result.errors[:10]:
+                log.warning("%s", err)
+            if client.rate_limit:
+                log.info("Nexus API requests left: %d today, %d this hour", *client.rate_limit)
+
+        def failed(message: str) -> None:
+            self.nexus_checking = False
+            self.busy_label.setText("")
+            log.error("Nexus check failed: %s", message)
+
+        def progress(i: int, n: int) -> None:
+            self.busy_label.setText(f"Checking mods on Nexus… {i}/{n}")
+
+        tasks.start(lambda p: nexus_tasks.check_mods(client, domain, mods, force, p), done, failed, progress)
+
+    def nexus_identify(self, name: str) -> None:
+        client = self._nexus_client()
+        mod = self.modlist.get(name)
+        if client is None or mod is None:
+            return
+
+        def done(found: bool) -> None:
+            if found:
+                log.info("Identified '%s' as Nexus mod %s", name, mod.meta.get("nexus_id"))
+                self.nexus_check(force=True, only=[name])
+            else:
+                log.warning("'%s' was not found on Nexus Mods by its archive's checksum", name)
+            self.mod_model.reset()
+
+        tasks.start(lambda _p: nexus_tasks.identify(client, self.instance.game.nexus_domain, mod),
+                    done, lambda msg: log.error("Identify failed: %s", msg))
+
+    def _mods_changed_quiet(self) -> None:
+        """Refresh views after metadata changed without touching the deployment state."""
+        self._update_status()
 
     def _offer_script_extender(self, exe):
         """Starting the plain game with script extender plugins enabled silently skips them."""
@@ -1152,6 +1358,20 @@ class MainWindow(QMainWindow):
         self.settings.setValue("split_v", self.v_split.saveState())
         try:
             self.log_handler.emitter.message.disconnect(self._append_log)
+            if nxm_router is not None:
+                nxm_router.link.disconnect(self.handle_nxm)
         except (RuntimeError, TypeError):
             pass
         super().closeEvent(event)
+
+
+def _size(n: int) -> str:
+    return f"{n / 1048576:.1f} MB" if n else ""
+
+
+def _progress_text(d: dict) -> str:
+    if d.get("cancel"):
+        return "Cancelling…"
+    if d.get("total"):
+        return f"Downloading {100 * d['done'] // d['total']}%"
+    return "Downloading…" if d.get("done") else "Starting…"

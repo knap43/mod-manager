@@ -2,8 +2,9 @@
 Type=Application
 Name=Mod Manager
 Comment=Manage and deploy game mods, run games through Proton
-Exec=modmanager %U
+Exec=modmanager %u
 Icon=modmanager
 Terminal=false
 Categories=Game;
+MimeType=x-scheme-handler/nxm;
 Keywords=mods;modding;skyrim;proton;umu;

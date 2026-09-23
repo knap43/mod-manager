@@ -119,12 +119,16 @@ class ModListModel(_ReorderModel):
             if col == 1:
                 return _conflict_symbol(info) if mod.enabled or mod.is_overwrite else ""
             if col == 2:
+                if mod.meta.get("nexus_update"):
+                    return f"{mod.version or '?'}  ↑ {mod.meta.get('nexus_latest_version') or 'new'}"
                 return mod.version
             if col == 3:
                 return "" if mod.is_overwrite or mod.is_separator else str(index.row())
         elif role == Qt.CheckStateRole and col == 0 and not (mod.is_separator or mod.is_overwrite):
             return Qt.Checked if mod.enabled else Qt.Unchecked
         elif role == Qt.ForegroundRole:
+            if col == 2 and mod.meta.get("nexus_update"):
+                return QBrush(QColor(theme.WARN))
             if col == 1 and info:
                 if info.redundant:
                     return QBrush(QColor(theme.BAD))
@@ -222,6 +226,10 @@ def _mod_tooltip(mod: Mod, info) -> str:
         lines.append("Files created by the game and tools while running.")
     if mod.meta.get("source"):
         lines.append(f"Installed from: {mod.meta['source']}")
+    if mod.meta.get("nexus_id"):
+        lines.append(f"Nexus Mods ID: {mod.meta['nexus_id']}")
+    if mod.meta.get("nexus_update"):
+        lines.append(f"Update available on Nexus Mods: {mod.meta.get('nexus_latest_version') or 'newer file'}")
     if info:
         lines.append(f"{info.total_files} files")
         if info.overwrites:

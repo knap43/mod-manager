@@ -25,9 +25,21 @@ class ArchiveInfo:
     name: str
     version: str = ""
     nexus_id: int | None = None
+    file_id: int | None = None
+    game: str | None = None
 
 
 def guess_info(archive: Path) -> ArchiveInfo:
+    """Name, version and Nexus IDs from the download's metadata, or its file name."""
+    meta = paths.read_json(archive.with_name(archive.name + ".meta.json"), {}) or {}
+    if meta.get("mod_id") and meta.get("state") != "downloading":
+        return ArchiveInfo(
+            name=str(meta.get("mod_name") or archives.archive_stem(archive)).strip(),
+            version=str(meta.get("version") or ""),
+            nexus_id=int(meta["mod_id"]),
+            file_id=int(meta["file_id"]) if meta.get("file_id") else None,
+            game=meta.get("game"),
+        )
     stem = archives.archive_stem(archive) if archives.is_archive(archive) else archive.name
     m = NEXUS_NAME.match(stem)
     if m:
@@ -131,6 +143,13 @@ class Installer:
                 meta["version"] = info.version
             if info.nexus_id:
                 meta["nexus_id"] = info.nexus_id
+                # A new download of the mod: forget the previous update check.
+                for key in ("nexus_update", "nexus_latest_version", "nexus_checked"):
+                    meta.pop(key, None)
+            if info.file_id:
+                meta["nexus_file_id"] = info.file_id
+            if info.game:
+                meta["nexus_game"] = info.game
         meta.update(extra_meta or {})
         paths.write_json(dest / META_FILE, meta)
         return name

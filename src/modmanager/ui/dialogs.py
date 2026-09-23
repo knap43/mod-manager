@@ -13,10 +13,11 @@ from PySide6.QtWidgets import (
     QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from modmanager.core import paths, proton, steam
+from modmanager.core import desktop, nexus, paths, proton, steam
 from modmanager.core.games import GAMES, GameDef, get_game
 from modmanager.core.installer import has_fomod, looks_like_data
 from modmanager.core.instance import DEPLOY_METHODS, Executable, Instance, InstanceRegistry, sanitize_name
+from modmanager.ui import tasks
 
 METHOD_LABELS = {
     "hardlink": "Hard links (recommended — needs the instance on the same drive as the game)",
@@ -374,6 +375,44 @@ class SettingsDialog(QDialog):
         ))
         tabs.addTab(prot, "Proton")
 
+        # Nexus
+        nx = QWidget()
+        nform = QFormLayout(nx)
+        self.api_key = QLineEdit(nexus.load_api_key())
+        self.api_key.setEchoMode(QLineEdit.Password)
+        self.api_key.setPlaceholderText("Personal API key")
+        show = QCheckBox("Show")
+        show.toggled.connect(lambda on: self.api_key.setEchoMode(QLineEdit.Normal if on else QLineEdit.Password))
+        key_row = QWidget()
+        kl = QHBoxLayout(key_row)
+        kl.setContentsMargins(0, 0, 0, 0)
+        kl.addWidget(self.api_key, 1)
+        kl.addWidget(show)
+        validate = QPushButton("Validate")
+        validate.clicked.connect(self._validate_key)
+        kl.addWidget(validate)
+        self.key_status = QLabel()
+        get_key = QLabel(f'<a href="{nexus.API_KEY_PAGE}">Get your personal API key</a> '
+                         "(bottom of the page, \"Personal API Key\").")
+        get_key.setOpenExternalLinks(True)
+        self.nxm_status = QLabel()
+        register = QPushButton("Handle nxm:// links with this program")
+        register.clicked.connect(self._register_nxm)
+        nform.addRow("API key", key_row)
+        nform.addRow("", self.key_status)
+        nform.addRow("", get_key)
+        nform.addRow("Downloads", register)
+        nform.addRow("", self.nxm_status)
+        nform.addRow("", hint(
+            "With the handler registered, the \"Mod Manager Download\" buttons on Nexus Mods send files "
+            "here; they appear in the Downloads tab. The key is stored in ~/.config/modmanager/nexus.json, "
+            "readable only by you, and is shared by all instances."
+        ))
+        tabs.addTab(nx, "Nexus")
+        if not self.instance.game.nexus_domain:
+            tabs.setTabEnabled(tabs.indexOf(nx), False)
+        self._update_nxm_status()
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
@@ -383,6 +422,42 @@ class SettingsDialog(QDialog):
         self._check_umu()
         self._check_prefix()
         self.new_method: str | None = None
+
+    def _validate_key(self) -> None:
+        key = self.api_key.text().strip()
+        if not key:
+            set_status(self.key_status, False, "Enter your API key first.")
+            return
+        set_status(self.key_status, True, "Checking…")
+        self.key_status.repaint()
+
+        def show(ok: bool, text: str) -> None:
+            try:
+                set_status(self.key_status, ok, text)
+            except RuntimeError:
+                pass  # Dialog already closed.
+
+        def done(user):
+            premium = "premium" if user.get("is_premium") else "free account (downloads need the website's button)"
+            show(True, f"Valid — logged in as {user.get('name', '?')}, {premium}.")
+
+        tasks.start(lambda _p: nexus.NexusClient(key).validate(), done, lambda msg: show(False, msg))
+
+    def _register_nxm(self) -> None:
+        try:
+            desktop.register_nxm_handler()
+        except OSError as exc:
+            QMessageBox.warning(self, "nxm:// links", f"Could not register the handler:\n{exc}")
+        self._update_nxm_status()
+
+    def _update_nxm_status(self) -> None:
+        current = desktop.nxm_handler()
+        if current == desktop.NXM_DESKTOP:
+            set_status(self.nxm_status, True, "This program handles nxm:// links.")
+        elif current:
+            set_status(self.nxm_status, False, f"nxm:// links currently open with {current}.")
+        else:
+            set_status(self.nxm_status, False, "No program handles nxm:// links yet.")
 
     def _check_umu(self) -> None:
         found = proton.find_umu_run(self.umu.text().strip())
@@ -437,6 +512,8 @@ class SettingsDialog(QDialog):
         pcfg["game_id"] = self.game_id.text().strip() or self.instance.game.umu_id
         pcfg["store"] = combo_value(self.store)
         pcfg["env"] = env
+        if self.api_key.text().strip() != nexus.load_api_key():
+            nexus.save_api_key(self.api_key.text())
         self.instance.save()
         method = self.method.currentData()
         self.new_method = method if method != self.instance.deploy_method else None
