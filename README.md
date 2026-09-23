@@ -120,7 +120,7 @@ uses them. **Purge** returns the game folder to vanilla.
 | Deployment manifest and backups | `<instance>/deploy/` |
 | Program output from the last run | `<instance>/logs/` |
 | Application log | `~/.local/share/modmanager/logs/modmanager.log` |
-| Game `plugins.txt` | `<prefix>/drive_c/users/steamuser/AppData/Local/Skyrim Special Edition/` |
+| Game `plugins.txt` | `<prefix>/drive_c/users/steamuser/AppData/Local/Skyrim Special Edition/` (`… GOG/` or `… EPIC/` for those editions, detected from the game folder) |
 
 ## Development
 

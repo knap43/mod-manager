@@ -213,3 +213,25 @@ def test_appimage_environment_is_not_leaked():
     clean = proton.host_env(env)
     assert clean == {"PATH": "/usr/bin", "HOME": "/home/u"}
     assert proton.host_env({"PATH": "/usr/bin"}) == {"PATH": "/usr/bin"}
+
+
+def test_gog_edition_uses_its_own_plugin_folder(env):
+    (env.game_dir / "Galaxy64.dll").write_bytes(b"")
+    root = add_mod(env, "U", {"scripts/u.pex": "x"})
+    make_plugin(root / "Skyrim Unbound.esp")
+    mgr = Manager(env)
+    mgr.modlist.set_enabled(["U"], True)
+    mgr.deploy()
+    local = proton.appdata_local(Path(env.proton["prefix"]))
+    assert "*Skyrim Unbound.esp" in (local / "Skyrim Special Edition GOG" / "plugins.txt").read_text(encoding="cp1252").splitlines()
+    assert not (local / "Skyrim Special Edition" / "plugins.txt").exists()
+
+
+def test_store_detection(tmp_path):
+    from modmanager.core.games import detect_store
+
+    assert detect_store(tmp_path) is None
+    (tmp_path / "steam_api64.dll").write_bytes(b"")
+    assert detect_store(tmp_path) == "steam"
+    (tmp_path / "goggame-1711230643.info").write_text("{}")
+    assert detect_store(tmp_path) == "gog"

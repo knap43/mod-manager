@@ -83,9 +83,10 @@ class Manager:
     def plugin_file_dir(self) -> Path | None:
         game = self.instance.game
         prefix = self.instance.proton.get("prefix")
-        if not (game.has_plugins and game.appdata_name and prefix):
+        folder = game.local_folder(self.instance.game_dir)
+        if not (game.has_plugins and folder and prefix):
             return None
-        return proton.appdata_local(Path(prefix).expanduser()) / game.appdata_name
+        return proton.appdata_local(Path(prefix).expanduser()) / folder
 
     def write_game_plugin_files(self) -> None:
         """Write plugins.txt/loadorder.txt where the game reads them inside the prefix."""
@@ -106,7 +107,8 @@ class Manager:
             target / "loadorder.txt", "\r\n".join(e.name for e in entries) + "\r\n",
             encoding="cp1252", newline="",
         )
-        log.debug("Wrote plugin list to %s", target)
+        active = sum(1 for e in entries if e.enabled and not e.implicit)
+        log.info("Wrote %d active plugin(s) to %s", active, target / "plugins.txt")
 
     def _apply_timestamps(self, entries: list[PluginEntry]) -> None:
         data = self.instance.data_dir

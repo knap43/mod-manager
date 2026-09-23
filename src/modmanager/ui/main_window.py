@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from modmanager import APP_NAME, __version__
 from modmanager.core import archives, fomod, proton
+from modmanager.core.games import detect_store
 from modmanager.core.installer import Installer, detect_data_root, guess_info
 from modmanager.core.instance import Instance, InstanceRegistry
 from modmanager.core.manager import Manager
@@ -413,6 +414,10 @@ class MainWindow(QMainWindow):
     def _startup_checks(self) -> None:
         if not self.instance.data_dir.is_dir():
             log.error("Data folder not found: %s — check Settings.", self.instance.data_dir)
+        store = detect_store(self.instance.game_dir)
+        if store and self.instance.game.store_folders:
+            log.info("Detected the %s edition; plugin list: %s", store.upper() if store == "gog" else store.title(),
+                     self.manager.plugin_file_dir())
         umu = proton.find_umu_run(self.instance.proton.get("umu_run", ""))
         if umu:
             log.info("umu-launcher: %s", umu)
@@ -1020,7 +1025,7 @@ class MainWindow(QMainWindow):
 
     def open_my_games(self) -> None:
         prefix = self.instance.proton.get("prefix")
-        name = self.instance.game.my_games_name
+        name = self.instance.game.my_games_folder(self.instance.game_dir)
         if prefix and name:
             open_path(proton.my_games(Path(prefix).expanduser()) / name)
 

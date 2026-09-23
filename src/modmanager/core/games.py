@@ -8,7 +8,10 @@ mods are files dropped into a folder.
 
 from __future__ import annotations
 
+import fnmatch
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # Top-level folders that identify the root of a Bethesda "Data" tree inside an archive.
 BETHESDA_DATA_DIRS = frozenset(
@@ -21,6 +24,25 @@ BETHESDA_DATA_DIRS = frozenset(
     }
 )
 BETHESDA_DATA_EXTS = frozenset({".esp", ".esm", ".esl", ".bsa", ".ba2"})
+
+# Files in a game folder that reveal which store it came from (checked in this order).
+STORE_MARKERS = (
+    ("gog", ("galaxy64.dll", "galaxy.dll", "goggame-*.info", "gog.ico")),
+    ("epic", ("eossdk-win64-shipping.dll",)),
+    ("steam", ("steam_api64.dll", "steam_api.dll")),
+)
+
+
+def detect_store(game_dir: Path) -> str | None:
+    """Return "gog", "epic" or "steam" for a game folder, or None if unknown."""
+    try:
+        names = [e.name.lower() for e in os.scandir(game_dir) if e.is_file()]
+    except OSError:
+        return None
+    for store, patterns in STORE_MARKERS:
+        if any(fnmatch.fnmatchcase(n, pat) for pat in patterns for n in names):
+            return store
+    return None
 
 
 @dataclass(frozen=True)
@@ -35,6 +57,9 @@ class GameDef:
     # Folder names below the Wine user's AppData/Local and Documents/My Games.
     appdata_name: str | None = None
     my_games_name: str | None = None
+    # Some store editions use different AppData/My Games folders, e.g.
+    # "Skyrim Special Edition GOG". Maps a detected store to that folder name.
+    store_folders: tuple[tuple[str, str], ...] = ()
     # "asterisk": plugins.txt order with '*' marking active plugins (SSE, FO4).
     # "timestamp": plugins.txt lists active plugins, file mtimes decide order (Skyrim LE).
     # None: the game has no plugin load order.
@@ -52,6 +77,15 @@ class GameDef:
         if self.umu_id_override:
             return self.umu_id_override
         return f"umu-{self.steam_app_id}" if self.steam_app_id else "umu-default"
+
+    def local_folder(self, game_dir: Path) -> str | None:
+        """AppData/Local and My Games folder name for the edition installed in ``game_dir``."""
+        store = detect_store(game_dir) if self.store_folders else None
+        return dict(self.store_folders).get(store or "", self.appdata_name)
+
+    def my_games_folder(self, game_dir: Path) -> str | None:
+        store = detect_store(game_dir) if self.store_folders else None
+        return dict(self.store_folders).get(store or "", self.my_games_name)
 
     @property
     def has_plugins(self) -> bool:
@@ -72,6 +106,7 @@ GAMES: dict[str, GameDef] = {
             launcher="SkyrimSELauncher.exe",
             appdata_name="Skyrim Special Edition",
             my_games_name="Skyrim Special Edition",
+            store_folders=(("gog", "Skyrim Special Edition GOG"), ("epic", "Skyrim Special Edition EPIC")),
             plugin_format="asterisk",
             implicit_plugins=SKYRIM_SE_MASTERS,
             ccc_file="Skyrim.ccc",
