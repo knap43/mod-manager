@@ -31,6 +31,12 @@ through Proton with [umu-launcher](https://github.com/Open-Wine-Components/umu-l
   build), `GAMEID`/`STORE` and extra environment variables. `winecfg` and
   Winetricks run in the same prefix. **Run** deploys, writes `plugins.txt` into the
   prefix, starts the program and streams its output to the log.
+- **FOMOD installers** (`fomod/ModuleConfig.xml`): a step-by-step wizard with option
+  images and descriptions, all group types, condition flags, steps that appear or
+  disappear depending on earlier answers, options whose type depends on your installed
+  plugins or game version, and conditional file installs. Your choices are remembered
+  and preselected when you reinstall or update the mod. **Manual…** falls back to
+  picking the files yourself.
 - **Installing** from archives (zip natively; 7z/rar through 7-Zip, `bsdtar` or `unrar`)
   or folders, with automatic detection of the folder that maps onto `Data`.
   Nexus-style file names (`Name-1234-1-0-1700000000.7z`) give the mod's name,
@@ -130,5 +136,5 @@ deployment, Proton, Steam detection) and `modmanager/ui` (PySide6).
 
 - Nexus Mods integration (`nxm://` links, downloads, update checks)
 - SKSE detection
-- FOMOD installers (for now, you pick the option's folder manually)
+- C# script installers (`script.cs`), which only a few very old mods use
 - Automatic load order sorting (LOOT) and dependency detection

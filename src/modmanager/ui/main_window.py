@@ -10,14 +10,14 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QModelIndex, QObject, QProcess, QProcessEnvironment, QSettings, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence, QTextCharFormat
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+    QAbstractItemView, QComboBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
     QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
     QSizePolicy, QSplitter, QTabWidget, QToolButton, QTreeView, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget,
 )
 
 from modmanager import APP_NAME, __version__
-from modmanager.core import archives, proton
+from modmanager.core import archives, fomod, proton
 from modmanager.core.installer import Installer, detect_data_root, guess_info
 from modmanager.core.instance import Instance, InstanceRegistry
 from modmanager.core.manager import Manager
@@ -26,6 +26,7 @@ from modmanager.ui import tasks, theme
 from modmanager.ui.dialogs import (
     ConflictsDialog, ExecutablesDialog, InstallDialog, InstancePicker, SettingsDialog,
 )
+from modmanager.ui.fomod_dialog import FomodDialog
 from modmanager.ui.models import ModListModel, PluginListModel
 
 log = logging.getLogger(__name__)
@@ -679,16 +680,58 @@ class MainWindow(QMainWindow):
         def work(_progress):
             staging = installer.extract(source)
             root, confident = detect_data_root(staging, game)
-            return staging, root, confident
+            result = {"staging": staging, "root": root, "confident": confident, "fomod": None}
+            fomod_root = fomod.find_fomod(staging)
+            if fomod_root is not None:
+                try:
+                    config, finfo = fomod.load(fomod_root)
+                    result["fomod"] = (fomod_root, config, finfo, self.manager.fomod_context())
+                except (fomod.FomodError, OSError) as exc:
+                    log.warning("Cannot use the FOMOD installer of %s (%s); installing manually.", source.name, exc)
+            return result
 
         self.set_busy(f"Extracting {source.name}…")
-        tasks.start(work, lambda r: self._install_confirm(installer, source, *r), self._task_failed)
+        tasks.start(work, lambda r: self._install_confirm(installer, source, r), self._task_failed)
 
-    def _install_confirm(self, installer: Installer, source: Path, staging: Path, root: Path, confident: bool) -> None:
+    def _previous_install(self, info) -> tuple[str, dict]:
+        """Name and FOMOD choices of an installed copy of this mod, for reinstalls and updates."""
+        for mod in self.modlist.mods:
+            same_nexus = info.nexus_id and mod.meta.get("nexus_id") == info.nexus_id
+            if mod.name == info.name or same_nexus:
+                return mod.name, mod.meta.get("fomod") or {}
+        return info.name, {}
+
+    def _install_confirm(self, installer: Installer, source: Path, result: dict) -> None:
         self.set_busy(None)
+        staging = result["staging"]
         info = guess_info(source)
-        dlg = InstallDialog(staging, root, confident, info.name, self.instance.game,
-                            [m.name for m in self.modlist.mods], self)
+        name, previous = self._previous_install(info)
+        existing = [m.name for m in self.modlist.mods]
+
+        if result["fomod"] is not None:
+            root, config, finfo, ctx = result["fomod"]
+            session = fomod.FomodSession(config, root, ctx, previous)
+            proceed = True
+            if not session.module_requirements_met():
+                needs = "\n".join(f"• {r}" for r in config.dependencies.describe()) or "(unspecified)"
+                proceed = QMessageBox.question(
+                    self, "Requirements not met",
+                    f"This mod's installer says your setup does not meet its requirements:\n\n{needs}\n\n"
+                    "Install anyway?",
+                ) == QMessageBox.Yes
+            if not proceed:
+                installer.cleanup(staging)
+                return
+            dlg = FomodDialog(session, finfo, name, existing, self)
+            code = dlg.exec()
+            if code == QDialog.Accepted:
+                self._install_fomod(installer, source, staging, session, dlg.mod_name, dlg.mode, info)
+                return
+            if code != FomodDialog.MANUAL:
+                installer.cleanup(staging)
+                return
+
+        dlg = InstallDialog(staging, result["root"], result["confident"], name, self.instance.game, existing, self)
         if not dlg.exec():
             installer.cleanup(staging)
             return
@@ -700,21 +743,39 @@ class MainWindow(QMainWindow):
             finally:
                 installer.cleanup(staging)
 
-        def done(installed: str):
-            self.set_busy(None)
-            self.modlist.add_installed(installed, enabled=True)
-            self.mod_model.reset()
-            self._mods_changed()
-            self.refresh_downloads()
-            self._apply_mod_filter()
-            row = self.modlist.index_of(installed)
-            if row >= 0:
-                self.mod_view.setCurrentIndex(self.mod_model.index(row, 0))
-                self.mod_view.scrollTo(self.mod_model.index(row, 0))
-            log.info("Installed '%s' from %s", installed, source.name)
+        self.set_busy(f"Installing {name}…")
+        tasks.start(work, lambda n: self._installed(n, source), self._task_failed)
+
+    def _install_fomod(self, installer: Installer, source: Path, staging: Path, session, name: str,
+                       mode: str, info) -> None:
+        output = staging.with_name(staging.name + "-fomod")
+
+        def work(_progress):
+            try:
+                warnings = session.build(output)
+                for w in warnings:
+                    log.warning("%s: %s", name, w)
+                return installer.install(output, name, mode, source=source, info=info,
+                                         extra_meta={"fomod": session.choices()})
+            finally:
+                installer.cleanup(output)
+                installer.cleanup(staging)
 
         self.set_busy(f"Installing {name}…")
-        tasks.start(work, done, self._task_failed)
+        tasks.start(work, lambda n: self._installed(n, source), self._task_failed)
+
+    def _installed(self, installed: str, source: Path) -> None:
+        self.set_busy(None)
+        self.modlist.add_installed(installed, enabled=True)
+        self.mod_model.reset()
+        self._mods_changed()
+        self.refresh_downloads()
+        self._apply_mod_filter()
+        row = self.modlist.index_of(installed)
+        if row >= 0:
+            self.mod_view.setCurrentIndex(self.mod_model.index(row, 0))
+            self.mod_view.scrollTo(self.mod_model.index(row, 0))
+        log.info("Installed '%s' from %s", installed, source.name)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls() and not self.busy:

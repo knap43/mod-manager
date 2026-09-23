@@ -79,6 +79,12 @@ QTreeView::indicator:checked, QListView::indicator:checked, QCheckBox::indicator
     background: {ACCENT_HOVER}; border-color: {ACCENT_BORDER}; image: url(@CHECK@);
 }}
 QTreeView::indicator:disabled, QCheckBox::indicator:disabled {{ background: #303a46; border-color: #444; }}
+QRadioButton::indicator {{ width: 12px; height: 12px; border: 1px solid #5a5a5a; background: {BASE}; }}
+QRadioButton::indicator:checked {{ background: {ACCENT_HOVER}; border-color: {ACCENT_BORDER}; image: url(@RADIO@); }}
+QRadioButton::indicator:disabled {{ background: #303a46; border-color: #444; }}
+QCheckBox:disabled, QRadioButton:disabled {{ color: {TEXT_DIM}; }}
+QScrollArea {{ background: transparent; border: none; }}
+QScrollArea > QWidget > QWidget {{ background: transparent; }}
 QHeaderView {{ background: {PANEL}; border: none; }}
 QHeaderView::section {{ background: {PANEL}; color: {TEXT}; border: none; border-right: 1px solid {BORDER};
     border-bottom: 1px solid {BORDER}; padding: 4px 6px; }}
@@ -131,4 +137,5 @@ def apply(app: QApplication) -> None:
     app.setStyleSheet(
         STYLESHEET.replace("@CHECK@", (here / "check.svg").as_posix())
         .replace("@ARROW@", (here / "arrow.svg").as_posix())
+        .replace("@RADIO@", (here / "radio.svg").as_posix())
     )

@@ -101,6 +101,7 @@ class Installer:
         mode: str = "replace",
         source: Path | None = None,
         info: ArchiveInfo | None = None,
+        extra_meta: dict | None = None,
     ) -> str:
         """Move ``data_root``'s contents into ``mods/<name>``.
 
@@ -130,6 +131,7 @@ class Installer:
                 meta["version"] = info.version
             if info.nexus_id:
                 meta["nexus_id"] = info.nexus_id
+        meta.update(extra_meta or {})
         paths.write_json(dest / META_FILE, meta)
         return name
 

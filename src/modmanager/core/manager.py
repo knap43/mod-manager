@@ -6,11 +6,11 @@ import logging
 import os
 from pathlib import Path
 
-from modmanager.core import paths, proton
+from modmanager.core import fomod, paths, proton
 from modmanager.core.deploy import Deployer, DeployResult, ProgressFn
 from modmanager.core.instance import Executable, Instance
 from modmanager.core.modlist import ModList
-from modmanager.core.plugins import PluginEntry
+from modmanager.core.plugins import PluginEntry, is_plugin_name
 
 log = logging.getLogger(__name__)
 
@@ -117,6 +117,28 @@ class Manager:
                 os.utime(path, (stamp, stamp))
             except OSError:
                 pass
+
+    # ----------------------------------------------------------------- fomod
+
+    def fomod_context(self) -> fomod.FomodContext:
+        """What FOMOD conditions see: files from enabled mods and the base game, active plugins."""
+        tracked = set(self.deployer.files)
+        present = {k for k in self.snapshot_data() if k not in tracked}
+        present |= set(self.modlist.deployment_plan())
+        active = {e.name.lower() for e in self.plugins() if e.enabled}
+
+        def state(path: str) -> str:
+            key = path.replace("\\", "/").strip("/").lower()
+            if key in active:
+                return "Active"
+            if key in present:
+                return "Inactive" if is_plugin_name(key) else "Active"
+            return "Missing"
+
+        binary = self.instance.game.binary
+        exe = paths.find_child_ci(self.instance.game_dir, binary) if binary else None
+        version = fomod.pe_file_version(exe) if exe else None
+        return fomod.FomodContext(file_state=state, game_version=version)
 
     # ---------------------------------------------------------------- running
 

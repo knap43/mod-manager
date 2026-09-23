@@ -608,8 +608,8 @@ class InstallDialog(QDialog):
         lay.addLayout(top)
         if has_fomod(staging) or any(has_fomod(Path(e.path)) for e in os.scandir(staging) if e.is_dir()):
             lay.addWidget(hint(
-                "This archive contains a FOMOD installer, which is not supported yet. Pick the folder "
-                "holding the option you want (it should contain meshes, textures, plugins and so on)."
+                "Installing manually: this archive has a FOMOD installer. Pick the folder holding "
+                "the option you want (it should contain meshes, textures, plugins and so on)."
             ))
         lay.addWidget(self.tree, 1)
         row = QHBoxLayout()
@@ -703,7 +703,8 @@ class InstallDialog(QDialog):
 
     @property
     def mode(self) -> str:
-        return "merge" if self.merge.isVisible() and self.merge.isChecked() else "replace"
+        # isVisible() is False for every child once the dialog has closed, so use isHidden().
+        return "merge" if not self.merge.isHidden() and self.merge.isChecked() else "replace"
 
 
 # ---------------------------------------------------------------------- conflicts
