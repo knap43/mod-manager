@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Mod Manager
+Comment=Manage and deploy game mods, run games through Proton
+Exec=modmanager %U
+Icon=applications-games
+Terminal=false
+Categories=Game;Utility;
