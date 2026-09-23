@@ -43,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="modmanager", description=f"{APP_NAME} {__version__}")
     parser.add_argument("--instance", type=Path, help="open the instance in this folder")
     parser.add_argument("--pick", action="store_true", help="show the instance picker")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("-v", "--verbose", action="store_true", help="log debug output to the terminal")
     args, qt_args = parser.parse_known_args(argv if argv is not None else sys.argv[1:])
 

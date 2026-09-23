@@ -38,22 +38,55 @@ through Proton with [umu-launcher](https://github.com/Open-Wine-Components/umu-l
 
 ## Requirements
 
-- Python 3.10+ and PySide6 (Qt 6)
+- Python 3.10+ and PySide6 (Qt 6); the AppImage bundles both
 - [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) (`umu-run`)
   to run Windows programs
-- `7zz`/`7z` (7-Zip) or `bsdtar` (libarchive) to install `.7z`/`.rar` archives
+- `bsdtar` (libarchive, always present on Arch) or 7-Zip to install `.7z`/`.rar` archives
 - For the Steam version of Skyrim, Steam must be running (the game uses Steam DRM)
 
-## Installation
+## Building and installing
+
+Everything goes through `./build.sh` (`./build.sh help` lists the commands).
+Results are written to `dist/`.
+
+### Arch Linux package
 
 ```sh
-pipx install .            # or: pip install --user .
-modmanager
+./build.sh deps          # pacman: pyside6, build tools, base-devel; then umu-launcher, 7zip, fuse2
+./build.sh arch -i       # build with makepkg and install the package
 ```
 
-To run from a checkout without installing: `pip install PySide6 && PYTHONPATH=src python -m modmanager`.
+`./build.sh arch` without `-i` only builds `dist/modmanager-<version>-1-any.pkg.tar.zst`.
+Any other option goes to makepkg (for example `--nocheck`). The package is built from
+the working tree, uncommitted changes included, using `packaging/arch/PKGBUILD`.
+If `umu-launcher` is not in your enabled repositories, `deps` tells you to get it from the AUR.
 
-`data/modmanager.desktop` can be copied to `~/.local/share/applications/`.
+### AppImage
+
+```sh
+./build.sh appimage      # dist/ModManager-<version>-x86_64.AppImage
+```
+
+This bundles a relocatable Python ([python-build-standalone](https://github.com/astral-sh/python-build-standalone),
+checksum-verified) and the PySide6 Essentials wheel. It strips the Qt parts the app
+never loads, checks that the result still starts, and packs everything with
+[appimagetool](https://github.com/AppImage/appimagetool). It needs `curl`, network
+access and nothing else: no FUSE, no root. Downloads are cached in `~/.cache/modmanager-build`.
+
+When the AppImage starts `umu-run` or a game, it removes its own variables
+(`APPDIR`, paths into the mount) from the environment first, so they see your
+system as usual. Running an AppImage requires FUSE 2 (`fuse2` on Arch); on the X11
+platform, Qt also needs `xcb-util-cursor`.
+
+### Running from the source tree
+
+```sh
+./build.sh run           # needs python and pyside6 installed
+./build.sh test
+```
+
+`data/modmanager.desktop` and `data/modmanager.svg` are the desktop entry and
+icon; the Arch package installs both.
 
 ## Getting started with Skyrim SE
 

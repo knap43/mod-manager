@@ -82,6 +82,32 @@ class LaunchSpec:
         return f"{env} {shlex.join(self.argv)}".strip()
 
 
+APPIMAGE_VARS = ("APPDIR", "APPIMAGE", "ARGV0", "OWD")
+
+
+def host_env(env) -> dict[str, str]:
+    """Environment for child processes, without anything pointing into our AppImage.
+
+    umu-run is itself a Python program, so variables leaking from a bundled
+    runtime (paths into the AppImage mount) must not reach it or the game.
+    """
+    env = dict(env)
+    appdir = env.get("APPDIR")
+    if not appdir:
+        return env
+    for key in APPIMAGE_VARS:
+        env.pop(key, None)
+    for key, value in list(env.items()):
+        if appdir not in value:
+            continue
+        kept = [part for part in value.split(":") if appdir not in part]
+        if kept and ":" in value:
+            env[key] = ":".join(kept)
+        else:
+            del env[key]
+    return env
+
+
 def needs_proton(path: str) -> bool:
     return path.lower().endswith(WINDOWS_EXTS)
 
@@ -96,7 +122,7 @@ def build_launch(
     base_env: dict[str, str] | None = None,
 ) -> LaunchSpec:
     """Build the command line and environment for running ``program``."""
-    env = dict(os.environ if base_env is None else base_env)
+    env = host_env(os.environ if base_env is None else base_env)
     env.update({k: str(v) for k, v in (proton_cfg.get("env") or {}).items()})
     if extra_env:
         env.update(extra_env)

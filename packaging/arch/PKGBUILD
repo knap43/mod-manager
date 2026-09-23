@@ -1,0 +1,37 @@
+# Built from the local checkout by ./build.sh arch, which fills in pkgver and
+# places the source tarball next to this file.
+
+pkgname=modmanager
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Native Linux mod manager in the spirit of Mod Organizer 2, with Proton via umu-launcher'
+arch=('any')
+url='https://github.com/knap43/mod-manager'
+license=('GPL-3.0-or-later')
+depends=('python' 'pyside6')
+makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+checkdepends=('python-pytest')
+optdepends=(
+  'umu-launcher: run Windows games and tools through Proton'
+  '7zip: extract .7z archives with 7-Zip instead of bsdtar'
+  'unrar: extract RAR archives that bsdtar cannot read'
+)
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  python -m pytest -q
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  install -Dm644 data/modmanager.desktop -t "$pkgdir/usr/share/applications/"
+  install -Dm644 data/modmanager.svg -t "$pkgdir/usr/share/icons/hicolor/scalable/apps/"
+}

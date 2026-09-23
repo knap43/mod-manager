@@ -203,3 +203,13 @@ def test_skyrim_le_uses_timestamps(tmp_path, monkeypatch):
     assert mtimes == sorted(mtimes)
     active = (mgr.plugin_file_dir() / "plugins.txt").read_text(encoding="cp1252").split()
     assert active[:2] == ["Skyrim.esm", "Update.esm"]
+
+
+def test_appimage_environment_is_not_leaked():
+    env = {
+        "APPDIR": "/tmp/.mount_abc", "APPIMAGE": "/home/u/MM.AppImage",
+        "PATH": "/tmp/.mount_abc/usr/bin:/usr/bin", "PYTHONHOME": "/tmp/.mount_abc/usr", "HOME": "/home/u",
+    }
+    clean = proton.host_env(env)
+    assert clean == {"PATH": "/usr/bin", "HOME": "/home/u"}
+    assert proton.host_env({"PATH": "/usr/bin"}) == {"PATH": "/usr/bin"}
