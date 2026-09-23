@@ -51,7 +51,10 @@ class FakeNexus(BaseHTTPRequestHandler):
         base = f"/v1/games/{GAME}/mods"
         routes = {
             "/v1/users/validate": {"name": "tester", "is_premium": False, "user_id": 1},
-            f"{base}/100": {"name": "Cool Mod", "version": "1.3", "mod_id": 100},
+            f"{base}/100": {"name": "Cool Mod", "version": "1.3", "mod_id": 100, "game_id": 1704},
+            f"{base}/101": {"name": "Other", "version": "2.0", "mod_id": 101, "game_id": 1704, "requirements": {
+                "nexusRequirements": {"nodes": [{"modId": "7", "modName": "Seven", "url": "u", "gameId": GAME,
+                                                 "externalRequirement": False}]}}},
             f"{base}/100/files/200": {"file_name": "Cool Mod-100-1-2-1700000000.zip", "version": "1.2",
                                       "name": "Main file", "category_name": "MAIN"},
             f"{base}/100/files/200/download_link?key=K&expires=9": [
@@ -73,15 +76,34 @@ class FakeNexus(BaseHTTPRequestHandler):
             return self._send(403, {"message": "You don't have permission to get download links from the API without visting nexusmods.com - this is for premium users only."})
         self._send(404, {"message": "Not found"})
 
+    graphql_mode = "uid"   # "uid": modsByUid works; "none": the live API rejects it
+
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         FakeNexus.calls.append("graphql:" + str(body["variables"]))
-        assert "modRequirements(modId: $modId, gameDomainName: $gameDomainName)" in body["query"]
+        query = body["query"]
+        if "modRequirements(modId:" in query or FakeNexus.graphql_mode == "none":
+            # What the production API answers for fields it doesn't have.
+            return self._send(200, {"data": None, "errors": [
+                {"message": "Field 'modRequirements' doesn't exist on type 'Query'"},
+                {"message": "Variable $modId is declared by modRequirements but not used"},
+            ]})
+        assert "modsByUid(uids: $uids" in query
+        assert body["variables"]["uids"] == [str((1704 << 32) | 100)]
         nodes = [
             {"modId": "300", "modName": "Some Framework", "url": f"https://www.nexusmods.com/{GAME}/mods/300",
              "gameId": GAME, "notes": "", "externalRequirement": False},
         ]
-        self._send(200, {"data": {"modRequirements": {"nexusRequirements": {"nodes": nodes}}}})
+        self._send(200, {"data": {"modsByUid": {"nodes": [
+            {"modId": 100, "modRequirements": {"nexusRequirements": {"nodes": nodes}}},
+        ]}}})
+
+
+@pytest.fixture(autouse=True)
+def fresh_session():
+    nexus._graphql_requirements = None
+    FakeNexus.graphql_mode = "uid"
+    yield
 
 
 @pytest.fixture
@@ -188,3 +210,25 @@ def test_api_key_storage(tmp_path, monkeypatch):
     nexus.save_api_key(" abc ")
     assert nexus.load_api_key() == "abc"
     assert (nexus.key_file().stat().st_mode & 0o777) == 0o600
+
+
+def test_requirements_unavailable_do_not_break_update_check(env, server):
+    FakeNexus.graphql_mode = "none"
+    client = nexus.NexusClient(KEY, server)
+    for name in ("A", "B"):
+        (env.mods_dir / name).mkdir()
+    ml = ModList(env)
+    for name in ("A", "B"):
+        ml.get(name).meta.update(nexus_id=100, version="1.2")
+    result = nexus_tasks.check_mods(client, GAME, ml.mods)
+    assert result.checked == 2 and not result.errors and len(result.updates) == 2
+    assert "nexus_requirements" not in ModList(env).get("A").meta
+    assert sum(1 for c in FakeNexus.calls if c.startswith("graphql:")) == 1  # not retried
+
+
+def test_requirements_from_v1_mod_info(env, server):
+    client = nexus.NexusClient(KEY, server)
+    info = client.mod_info(GAME, 101)
+    reqs = client.requirements(GAME, 101, info)
+    assert [(r.mod_id, r.name) for r in reqs] == [(7, "Seven")]
+    assert not any(c.startswith("graphql:") for c in FakeNexus.calls)

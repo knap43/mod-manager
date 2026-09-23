@@ -139,6 +139,7 @@ def check_mod(client: NexusClient, game: str, mod: Mod) -> None:
     file_id = mod.meta.get("nexus_file_id")
     latest = ""
     update = False
+    info = client.mod_info(game, mod_id)
     if file_id:
         data = client.mod_files(game, mod_id)
         files = {int(f["file_id"]): f for f in data.get("files", [])}
@@ -160,16 +161,21 @@ def check_mod(client: NexusClient, game: str, mod: Mod) -> None:
                     latest = str(max(mains, key=lambda f: f.get("uploaded_timestamp") or 0).get("version") or "")
                     update = bool(installed) and normalize_version(latest) != installed
     else:
-        info = client.mod_info(game, mod_id)
         latest = str(info.get("version") or "")
         update = bool(installed and latest) and normalize_version(latest) != installed
-    requirements = [r.to_dict() for r in client.requirements(game, mod_id)]
     mod.meta.update({
         "nexus_latest_version": latest,
         "nexus_update": update,
-        "nexus_requirements": requirements,
         "nexus_checked": int(time.time()),
     })
+    # Requirements are a bonus: never let them spoil the update check.
+    try:
+        requirements = client.requirements(game, mod_id, info)
+    except NexusError as exc:
+        log.warning("Could not fetch requirements for %s: %s", mod.name, exc)
+        requirements = None
+    if requirements is not None:
+        mod.meta["nexus_requirements"] = [r.to_dict() for r in requirements]
     mod.save_meta()
 
 

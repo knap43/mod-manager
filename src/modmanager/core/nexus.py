@@ -237,27 +237,48 @@ class NexusClient:
 
     # --- v2
 
-    REQUIREMENTS_QUERY = """query modRequirements($modId: Int!, $gameDomainName: String!) {
-  modRequirements(modId: $modId, gameDomainName: $gameDomainName) {
-    nexusRequirements { nodes { modId modName url gameId notes externalRequirement } }
+    # Requirements are on the GraphQL Mod type, looked up by a 64-bit "uid":
+    # the numeric game id in the high 32 bits, the mod id in the low 32 bits.
+    REQUIREMENTS_QUERY = """query modsByUid($uids: [ID!]!, $count: Int) {
+  modsByUid(uids: $uids, count: $count) {
+    nodes {
+      modId
+      modRequirements { nexusRequirements { nodes { modId modName url gameId notes externalRequirement } } }
+    }
   }
 }"""
 
-    def requirements(self, game: str, mod_id: int) -> list[Requirement]:
-        data = self.graphql(self.REQUIREMENTS_QUERY, {"modId": mod_id, "gameDomainName": game})
-        nodes = (((data.get("modRequirements") or {}).get("nexusRequirements") or {}).get("nodes")) or []
-        result = []
-        for n in nodes:
-            try:
-                rid = int(n.get("modId")) if n.get("modId") not in (None, "") else None
-            except (TypeError, ValueError):
-                rid = None
-            result.append(Requirement(
-                mod_id=rid, name=n.get("modName") or "", url=n.get("url") or "",
-                game=n.get("gameId") or game, external=bool(n.get("externalRequirement")),
-                notes=n.get("notes") or "",
-            ))
-        return result
+    def requirements(self, game: str, mod_id: int, info: dict | None = None) -> list[Requirement] | None:
+        """Requirements listed on the mod page, or None if Nexus doesn't provide them.
+
+        Tries the ``requirements`` field of v1 mod info first (free when ``info`` was
+        fetched anyway), then GraphQL. A query shape the live API rejects is not
+        retried for the rest of the session.
+        """
+        if info and isinstance(info.get("requirements"), dict):
+            return _parse_requirements(info["requirements"], game)
+        global _graphql_requirements
+        if _graphql_requirements is False:
+            return None
+        game_id = (info or {}).get("game_id") or GAME_IDS.get(game)
+        if not game_id:
+            return None
+        uid = str((int(game_id) << 32) | int(mod_id))
+        try:
+            data = self.graphql(self.REQUIREMENTS_QUERY, {"uids": [uid], "count": 1})
+        except NexusError as exc:
+            if _is_schema_error(str(exc)):
+                _graphql_requirements = False
+                log.info("Nexus Mods does not offer mod requirements through its API (%s); "
+                         "requirement checks are skipped for now.", exc)
+                return None
+            raise
+        _graphql_requirements = True
+        nodes = ((data.get("modsByUid") or {}).get("nodes")) or []
+        node = next((n for n in nodes if str(n.get("modId")) == str(mod_id)), nodes[0] if nodes else None)
+        if node is None:
+            return None
+        return _parse_requirements(node.get("modRequirements") or {}, game)
 
     # --- downloads
 
@@ -295,6 +316,33 @@ class NexusClient:
         except BaseException:
             part.unlink(missing_ok=True)
             raise
+
+
+# Numeric Nexus game ids (the v1 mod info's "game_id" is preferred when available).
+GAME_IDS = {"skyrimspecialedition": 1704, "skyrim": 110, "fallout4": 1151}
+_graphql_requirements: bool | None = None  # None: untried, False: rejected by the live API
+
+
+def _is_schema_error(message: str) -> bool:
+    m = message.lower()
+    return any(s in m for s in ("doesn't exist on type", "cannot query field", "unknown argument",
+                                "is declared by", "unknown type", "not defined by type"))
+
+
+def _parse_requirements(data: dict, game: str) -> list[Requirement]:
+    nodes = ((data.get("nexusRequirements") or {}).get("nodes")) or []
+    result = []
+    for n in nodes:
+        try:
+            rid = int(n.get("modId")) if n.get("modId") not in (None, "") else None
+        except (TypeError, ValueError):
+            rid = None
+        result.append(Requirement(
+            mod_id=rid, name=n.get("modName") or "", url=n.get("url") or "",
+            game=n.get("gameId") or game, external=bool(n.get("externalRequirement")),
+            notes=n.get("notes") or "",
+        ))
+    return result
 
 
 def md5_file(path: Path) -> str:
