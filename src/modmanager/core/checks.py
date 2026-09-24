@@ -7,9 +7,11 @@ a ``fix``; otherwise it may carry a ``url`` to get what is missing.
 
 from __future__ import annotations
 
+import os
 import re
 import zlib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from modmanager.core import nexus, script_extender
@@ -31,6 +33,8 @@ class Problem:
     fix_label: str = ""
     fix: Callable[[], None] | None = field(default=None, repr=False)
     url: str = ""
+    # A program to run in the Wine prefix as the fix, e.g. ["winetricks", "d3dcompiler_47"].
+    tool: list[str] | None = None
 
 
 def find_problems(manager: "Manager") -> list[Problem]:
@@ -42,6 +46,7 @@ def find_problems(manager: "Manager") -> list[Problem]:
     problems += _script_extender_problems(manager, plan)
     problems += _nexus_requirements(manager)
     problems += _loot_problems(manager, entries)
+    problems += _native_dll_problems(manager, plan)
     order = {ERROR: 0, WARNING: 1}
     return sorted(problems, key=lambda p: (order.get(p.severity, 2), p.title.lower()))
 
@@ -304,4 +309,56 @@ def _loot_problems(manager: "Manager", entries: list[PluginEntry]) -> list[Probl
                     f"{e.name} requires {display}, which is missing",
                     "(LOOT masterlist)", url=url,
                 ))
+    return problems
+
+
+# --------------------------------------------------------- Proton / Wine DLLs
+
+@dataclass(frozen=True)
+class NativeDllRule:
+    trigger: str   # Lower-cased Data path whose presence means the mod is installed
+    mod: str
+    dll: str
+    verb: str      # Winetricks verb that installs the DLL and sets the override
+    why: str
+
+
+NATIVE_DLL_RULES = (
+    NativeDllRule(
+        "skse/plugins/communityshaders.dll", "Community Shaders", "d3dcompiler_47.dll", "d3dcompiler_47",
+        "Community Shaders compiles its shaders with d3dcompiler_47.dll. Proton ships Wine's own "
+        "version (built on vkd3d-shader), which cannot compile them: CommunityShaders.log fills with "
+        "\"syntax error, unexpected KW_NAMESPACE\" and the effects stay off.",
+    ),
+)
+
+
+def _native_dll_problems(manager: "Manager", plan: set[str]) -> list[Problem]:
+    from modmanager.core import proton
+
+    prefix_text = manager.instance.proton.get("prefix")
+    if not prefix_text:
+        return []
+    prefix = Path(prefix_text).expanduser()
+    env = {**os.environ, **(manager.instance.proton.get("env") or {})}
+    problems: list[Problem] = []
+    for rule in NATIVE_DLL_RULES:
+        if rule.trigger not in plan and not _data_has(manager, rule.trigger):
+            continue
+        status = proton.native_dll_status(prefix, rule.dll, env)
+        if status == "ok":
+            continue
+        state = {
+            "missing": f"The prefix has no {rule.dll} yet.",
+            "wine": f"The prefix only has Wine's own {rule.dll}.",
+            "no_override": f"Microsoft's {rule.dll} is in the prefix, but Wine is not told to prefer it "
+                           "over its own (no \"native\" DLL override).",
+        }[status]
+        problems.append(Problem(
+            f"proton:{rule.verb}", ERROR, f"{rule.mod} needs Microsoft's {rule.dll} in the Wine prefix",
+            f"{rule.why}\n\n{state}\n\nThe fix runs \"winetricks {rule.verb}\" in the game's prefix, which "
+            "installs Microsoft's DLL and sets the override. If shaders still fail afterwards, delete "
+            "ShaderCache in the Overwrite folder so they are compiled again.",
+            fix_label="Install with Winetricks", tool=["winetricks", rule.verb],
+        ))
     return problems

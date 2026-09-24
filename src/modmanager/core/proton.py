@@ -70,6 +70,53 @@ def prefix_initialized(prefix: Path) -> bool:
     return (wine_root(prefix) / "system.reg").is_file()
 
 
+# Wine marks its own PE files in the DOS header area; Microsoft's DLLs have no such text.
+WINE_DLL_MARKERS = (b"Wine builtin DLL", b"Wine placeholder DLL")
+
+
+def dll_origin(path: Path) -> str:
+    """"missing", "wine" (Wine's reimplementation) or "native" (a real Windows DLL)."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(0x200)
+    except OSError:
+        return "missing"
+    return "wine" if any(m in head for m in WINE_DLL_MARKERS) else "native"
+
+
+def dll_override(prefix: Path, dll: str, env: dict[str, str] | None = None) -> str | None:
+    """The load order Wine uses for ``dll``: from WINEDLLOVERRIDES, else the prefix registry."""
+    name = dll.lower().removesuffix(".dll")
+    for part in (env or {}).get("WINEDLLOVERRIDES", "").split(";"):
+        dlls, _, mode = part.partition("=")
+        if name in [d.strip().lower().removesuffix(".dll") for d in dlls.split(",")]:
+            return mode.strip() or None
+    try:
+        text = (wine_root(prefix) / "user.reg").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    section = False
+    for line in text.splitlines():
+        if line.startswith("["):
+            section = line.lower().startswith("[software\\\\wine\\\\dlloverrides]")
+            continue
+        if section:
+            key, _, value = line.partition("=")
+            if key.strip().strip('"').lstrip("*").lower() == name:
+                return value.strip().strip('"')
+    return None
+
+
+def native_dll_status(prefix: Path, dll: str, env: dict[str, str] | None = None) -> str:
+    """"ok" when Wine will load a real Windows ``dll``; otherwise why not:
+    "missing" (not installed), "wine" (only Wine's version), "no_override" (installed but not preferred)."""
+    origin = dll_origin(wine_root(prefix) / "drive_c" / "windows" / "system32" / dll)
+    if origin != "native":
+        return origin
+    mode = dll_override(prefix, dll, env)
+    return "ok" if mode and mode.lower().startswith("n") else "no_override"
+
+
 @dataclass
 class LaunchSpec:
     argv: list[str]

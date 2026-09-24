@@ -1057,8 +1057,9 @@ class MainWindow(QMainWindow):
     def _problem_selected(self) -> None:
         p = self._selected_problem()
         self.problem_detail.setText(p.detail if p else "No problems found.")
-        self.problem_fix.setEnabled(bool(p and p.fix))
-        self.problem_fix.setText(p.fix_label if p and p.fix else "Fix")
+        fixable = bool(p and (p.fix or p.tool))
+        self.problem_fix.setEnabled(fixable and self.process is None)
+        self.problem_fix.setText(p.fix_label if fixable else "Fix")
         self.problem_url.setEnabled(bool(p and p.url))
         ignored = p is not None and p.key in set(self.instance.config.get("ignored_problems", []))
         self.problem_ignore.setEnabled(p is not None)
@@ -1066,6 +1067,10 @@ class MainWindow(QMainWindow):
 
     def _fix_problem(self) -> None:
         p = self._selected_problem()
+        if p is not None and p.tool:
+            log.info("Fixing \"%s\": running %s in the Wine prefix", p.title, " ".join(p.tool))
+            self.run_tool(p.tool[0], p.tool[1:])
+            return
         if p is None or p.fix is None:
             return
         try:
@@ -1425,6 +1430,7 @@ class MainWindow(QMainWindow):
         log.info("%s exited with code %s after %.0f s", label, code, elapsed)
         self._lock(False)
         if before is None:
+            self.refresh_problems()  # A tool such as winetricks may have fixed something.
             return
 
         def work(_p):

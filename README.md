@@ -59,7 +59,10 @@ through Proton with [umu-launcher](https://github.com/Open-Wine-Components/umu-l
   missing masters (pointing at the disabled mod or plugin that provides them), plugins
   loading before their masters, the 254-plugin limit, SKSE plugins without SKSE or with
   the wrong SKSE build, a missing Address Library for your game version, and requirements
-  listed on Nexus Mods that are not installed or disabled. Problems can be ignored
+  listed on Nexus Mods that are not installed or disabled. Under Proton it also
+  catches mods that need a real Windows DLL: Community Shaders needs Microsoft's
+  `d3dcompiler_47.dll` (Wine's own cannot compile its shaders), and the fix runs
+  `winetricks d3dcompiler_47` in the game's prefix. Problems can be ignored
   individually. **Run** warns before starting the game with problems that crash it.
 - **Installing** from archives (zip natively; 7z/rar through 7-Zip, `bsdtar` or `unrar`)
   or folders, with automatic detection of the folder that maps onto `Data`.
