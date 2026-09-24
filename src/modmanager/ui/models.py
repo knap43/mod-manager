@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QAbstractTableModel, QByteArray, QMimeData, QModelIndex, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtCore import QAbstractTableModel, QByteArray, QMimeData, QModelIndex, QPointF, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPainter, QPalette, QPolygonF
+from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from modmanager.core.modlist import OVERWRITE, Mod, ModList
 from modmanager.core.plugins import PluginEntry, assign_load_indices, partition_masters
 from modmanager.ui import theme
 
 MOD_MIME = "application/x-modmanager-mods"
+COLLAPSED_ROLE = Qt.UserRole + 10  # True/False for separators, None for everything else
 PLUGIN_MIME = "application/x-modmanager-plugins"
 
 
@@ -118,8 +120,7 @@ class ModListModel(_ReorderModel):
             if col == 0:
                 if mod.is_separator:
                     total, _ = self.group_counts(mod)
-                    arrow = "▸" if self.modlist.is_collapsed(mod) else "▾"
-                    return f"{arrow}  {mod.display_name}  ({total})"
+                    return f"{mod.display_name}  ({total})"  # SeparatorDelegate draws the arrow
                 return mod.display_name
             if col == 1:
                 return _conflict_symbol(info) if mod.enabled or mod.is_overwrite else ""
@@ -176,6 +177,8 @@ class ModListModel(_ReorderModel):
             return int(Qt.AlignCenter)
         elif role == Qt.UserRole:
             return mod.name
+        elif role == COLLAPSED_ROLE and col == 0 and mod.is_separator:
+            return self.modlist.is_collapsed(mod)
         return None
 
     def setData(self, index, value, role=Qt.EditRole):
@@ -405,4 +408,50 @@ class PluginListModel(_ReorderModel):
         self.changed.emit()
 
 
-__all__ = ["ModListModel", "PluginListModel", "OVERWRITE"]
+class SeparatorDelegate(QStyledItemDelegate):
+    """Draws the collapse arrow of separators as a triangle as tall as the title's capitals."""
+
+    LEFT = 6    # Padding before the arrow
+    GAP = 8     # Space between arrow and title
+
+    @classmethod
+    def arrow_zone(cls, font: QFont) -> float:
+        """Width from the cell's left edge that counts as clicking the arrow."""
+        return cls.LEFT + QFontMetricsF(font).capHeight() + cls.GAP
+
+    def paint(self, painter, option, index):
+        collapsed = index.data(COLLAPSED_ROLE)
+        if collapsed is None:
+            return super().paint(painter, option, index)
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        style = opt.widget.style() if opt.widget else QApplication.style()
+        style.drawPrimitive(QStyle.PE_PanelItemViewItem, opt, painter, opt.widget)
+
+        fm = QFontMetricsF(opt.font)
+        cap = fm.capHeight()
+        # Centre the arrow on the capitals: the text line is centred in the cell.
+        baseline = opt.rect.top() + (opt.rect.height() - fm.height()) / 2 + fm.ascent()
+        cy = baseline - cap / 2
+        x = opt.rect.left() + self.LEFT
+        if collapsed:  # ▶: as tall as a capital letter
+            w = cap * 0.866
+            points = [QPointF(x, cy - cap / 2), QPointF(x + w, cy), QPointF(x, cy + cap / 2)]
+        else:          # ▼: as wide as a capital letter is tall
+            h = cap * 0.866
+            points = [QPointF(x, cy - h / 2), QPointF(x + cap, cy - h / 2), QPointF(x + cap / 2, cy + h / 2)]
+        brush = index.data(Qt.ForegroundRole)
+        color = brush.color() if isinstance(brush, QBrush) else opt.palette.color(QPalette.Text)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(color)
+        painter.drawPolygon(QPolygonF(points))
+        painter.restore()
+
+        text_opt = QStyleOptionViewItem(option)
+        text_opt.rect = option.rect.adjusted(int(self.arrow_zone(opt.font)), 0, 0, 0)
+        super().paint(painter, text_opt, index)
+
+
+__all__ = ["ModListModel", "PluginListModel", "SeparatorDelegate", "OVERWRITE"]

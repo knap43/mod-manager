@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QModelIndex, QObject, QProcess, QProcessEnvironment, QSettings, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence, QTextCharFormat
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QKeySequence, QTextCharFormat
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
     QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
@@ -28,7 +28,7 @@ from modmanager.ui.dialogs import (
     ConflictsDialog, ExecutablesDialog, InstallDialog, InstancePicker, SettingsDialog,
 )
 from modmanager.ui.fomod_dialog import FomodDialog
-from modmanager.ui.models import ModListModel, PluginListModel
+from modmanager.ui.models import ModListModel, PluginListModel, SeparatorDelegate
 
 log = logging.getLogger(__name__)
 LOG_COLORS = {logging.DEBUG: theme.TEXT_DIM, logging.WARNING: theme.WARN, logging.ERROR: theme.BAD}
@@ -221,6 +221,7 @@ class MainWindow(QMainWindow):
 
         self.mod_model = ModListModel(self.modlist)
         self.mod_view = self._make_view(self.mod_model)
+        self.mod_view.setItemDelegateForColumn(0, SeparatorDelegate(self.mod_view))
         self.mod_view.header().setSectionResizeMode(0, QHeaderView.Stretch)
         for c in (1, 2, 3):
             self.mod_view.header().setSectionResizeMode(c, QHeaderView.ResizeToContents)
@@ -712,12 +713,14 @@ class MainWindow(QMainWindow):
             self.show_conflicts()
 
     def _separator_arrow_hit(self, pos) -> bool:
-        """True (and toggles) when a click lands on a separator's ▸/▾ arrow."""
+        """True (and toggles) when a click lands on a separator's arrow."""
         index = self.mod_view.indexAt(pos)
         mod = self.mod_model.mod_at(index.row()) if index.isValid() else None
         if mod is None or not mod.is_separator or index.column() != 0:
             return False
-        if pos.x() - self.mod_view.visualRect(index).left() > 24:
+        font = QFont(self.mod_view.font())
+        font.setBold(True)
+        if pos.x() - self.mod_view.visualRect(index).left() > SeparatorDelegate.arrow_zone(font):
             return False
         self.mod_model.toggle_collapsed(mod.name)
         return True
