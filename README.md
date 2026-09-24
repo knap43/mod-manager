@@ -1,8 +1,8 @@
+# Mod Manager
+
 <img width="1541" height="1056" alt="image" src="https://github.com/user-attachments/assets/ceacf045-6df5-4ed1-8804-609d740a2ce4" />
 
-Disclaimer: the code in its entirety was written by an LLM, use at your own discretion
-
-# Mod Manager
+Disclaimer: the code in its entirety was written by an LLM, use at your own discretion.
 
 A native Linux mod manager modelled on Mod Organizer 2. It works with any game
 whose mods are files placed in a folder, and has first-class support for
