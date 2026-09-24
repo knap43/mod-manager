@@ -59,6 +59,7 @@ class ModListModel(_ReorderModel):
     COLUMNS = ("Mod", "Conflicts", "Version", "Priority")
     mime_type = MOD_MIME
     changed = Signal()  # Emitted after enabling/disabling or reordering.
+    collapsed_changed = Signal()  # A separator was collapsed or expanded.
 
     def __init__(self, modlist: ModList):
         super().__init__()
@@ -115,6 +116,10 @@ class ModListModel(_ReorderModel):
 
         if role == Qt.DisplayRole:
             if col == 0:
+                if mod.is_separator:
+                    total, _ = self.group_counts(mod)
+                    arrow = "▸" if self.modlist.is_collapsed(mod) else "▾"
+                    return f"{arrow}  {mod.display_name}  ({total})"
                 return mod.display_name
             if col == 1:
                 return _conflict_symbol(info) if mod.enabled or mod.is_overwrite else ""
@@ -161,6 +166,11 @@ class ModListModel(_ReorderModel):
                 f.setItalic(True)
                 return f
         elif role == Qt.ToolTipRole:
+            if mod.is_separator:
+                total, enabled = self.group_counts(mod)
+                state = "click the arrow or double-click to expand" if self.modlist.is_collapsed(mod) \
+                    else "click the arrow or double-click to collapse"
+                return f"{mod.display_name}\n{total} mod(s), {enabled} enabled\n({state})"
             return _mod_tooltip(mod, info)
         elif role == Qt.TextAlignmentRole and col in (1, 3):
             return int(Qt.AlignCenter)
@@ -185,8 +195,43 @@ class ModListModel(_ReorderModel):
         names = [m.name for r in rows if (m := self.mod_at(r)) and not m.is_overwrite]
         if not names:
             return
-        self.modlist.move(names, min(dest, len(self.modlist.mods)))
+        dest = min(dest, len(self.modlist.mods))
+        if 0 < dest <= len(self.modlist.mods):
+            dest = self.modlist.drop_index(dest)
+        moving = self.modlist.with_collapsed_members(names)
+        self.modlist.move(moving, dest)
+        # A mod that lands in a collapsed group would vanish from view: open that group.
+        opened = False
+        for name in names:
+            mod = self.modlist.get(name)
+            if mod is None or mod.is_separator:
+                continue
+            sep = self.modlist.separator_of(self.modlist.index_of(name))
+            if sep is not None and self.modlist.is_collapsed(sep) and sep.name not in moving:
+                self.modlist.set_collapsed([sep.name], False)
+                opened = True
         self._refresh_all()
+        if opened:
+            self.collapsed_changed.emit()
+
+    def toggle_collapsed(self, name: str, collapsed: bool | None = None) -> None:
+        mod = self.modlist.get(name)
+        if mod is None or not mod.is_separator:
+            return
+        state = not self.modlist.is_collapsed(mod) if collapsed is None else collapsed
+        self.modlist.set_collapsed([name], state)
+        row = self.modlist.index_of(name)
+        self.dataChanged.emit(self.index(row, 0), self.index(row, self.columnCount() - 1))
+        self.collapsed_changed.emit()
+
+    def set_all_collapsed(self, collapsed: bool) -> None:
+        self.modlist.set_collapsed([m.name for m in self.modlist.mods if m.is_separator], collapsed)
+        self._emit_all()
+        self.collapsed_changed.emit()
+
+    def group_counts(self, mod: Mod) -> tuple[int, int]:
+        members = self.modlist.group_members(mod.name)
+        return len(members), sum(1 for m in members if m.enabled)
 
     def set_highlight(self, name: str | None) -> None:
         if name != self.highlight:

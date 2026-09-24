@@ -11,7 +11,8 @@ through Proton with [umu-launcher](https://github.com/Open-Wine-Components/umu-l
   `overwrite/`, `downloads/` and `profiles/`. Every profile has its own mod order,
   enabled mods and plugin load order (`modlist.txt` uses MO2's format).
 - **Mod list** ordered by priority (drag and drop, `Ctrl+Up/Down`, `Space` toggles),
-  separators, file conflict indicators (`+` wins, `−` loses, `±` both, `✕` fully
+  collapsible separators showing how many mods they hold (click the arrow, double-click,
+  or `←`/`→`; a collapsed separator drags as one block), file conflict indicators (`+` wins, `−` loses, `±` both, `✕` fully
   overwritten) and conflict highlighting for the selected mod. Double-click a mod
   to list its conflicting files.
 - **Plugin load order** with drag and drop, read from each plugin's header:

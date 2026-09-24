@@ -226,7 +226,9 @@ class MainWindow(QMainWindow):
             self.mod_view.header().setSectionResizeMode(c, QHeaderView.ResizeToContents)
         self.mod_view.customContextMenuRequested.connect(self._mod_menu)
         self.mod_view.selectionModel().currentRowChanged.connect(self._mod_selected)
-        self.mod_view.doubleClicked.connect(lambda idx: self.show_conflicts())
+        self.mod_view.doubleClicked.connect(self._mod_double_clicked)
+        self.mod_view.viewport().installEventFilter(self)
+        self.mod_model.collapsed_changed.connect(self._apply_mod_filter)
         self.mod_model.changed.connect(self._mods_changed)
         lv.addWidget(self.mod_view, 1)
 
@@ -542,6 +544,7 @@ class MainWindow(QMainWindow):
         return [m.name for r in rows if (m := self.mod_model.mod_at(r)) and not m.is_overwrite]
 
     def _mods_changed(self) -> None:
+        self._apply_mod_filter()
         self.dirty = True
         self.refresh_plugins()
         self._update_status()
@@ -585,6 +588,19 @@ class MainWindow(QMainWindow):
             elif mod.files():
                 m.addAction("Clear Overwrite…", self.clear_overwrite)
         m.addAction("Create separator…", self.create_separator)
+        if mod is not None and mod.is_separator:
+            members = [x.name for x in self.modlist.group_members(mod.name)]
+            collapsed = self.modlist.is_collapsed(mod)
+            m.addAction("Expand" if collapsed else "Collapse",
+                        lambda: self.mod_model.toggle_collapsed(mod.name, not collapsed))
+            if members:
+                m.addAction(f"Enable all {len(members)} in this separator",
+                            lambda: self.mod_model.set_enabled(members, True))
+                m.addAction(f"Disable all {len(members)} in this separator",
+                            lambda: self.mod_model.set_enabled(members, False))
+        if any(x.is_separator for x in self.modlist.mods):
+            m.addAction("Collapse all separators", lambda: self.mod_model.set_all_collapsed(True))
+            m.addAction("Expand all separators", lambda: self.mod_model.set_all_collapsed(False))
         if names:
             m.addSeparator()
             m.addAction(f"Remove {len(names)} mod(s)…", self.remove_mods)
@@ -656,9 +672,11 @@ class MainWindow(QMainWindow):
 
     def _apply_mod_filter(self) -> None:
         text = self.mod_filter.text().strip().lower()
+        # While filtering, search inside collapsed separators too.
+        collapsed = set() if text else self.modlist.collapsed_rows()
         for row in range(self.mod_model.rowCount()):
             mod = self.mod_model.mod_at(row)
-            hide = bool(text) and mod is not None and text not in mod.display_name.lower()
+            hide = (bool(text) and mod is not None and text not in mod.display_name.lower()) or row in collapsed
             self.mod_view.setRowHidden(row, QModelIndex(), hide)
         self.mod_view.setDragEnabled(not text)
         self._update_status()
@@ -686,7 +704,67 @@ class MainWindow(QMainWindow):
 
     # ============================================================ keyboard
 
+    def _mod_double_clicked(self, index: QModelIndex) -> None:
+        mod = self.mod_model.mod_at(index.row())
+        if mod is not None and mod.is_separator:
+            self.mod_model.toggle_collapsed(mod.name)
+        else:
+            self.show_conflicts()
+
+    def _separator_arrow_hit(self, pos) -> bool:
+        """True (and toggles) when a click lands on a separator's ▸/▾ arrow."""
+        index = self.mod_view.indexAt(pos)
+        mod = self.mod_model.mod_at(index.row()) if index.isValid() else None
+        if mod is None or not mod.is_separator or index.column() != 0:
+            return False
+        if pos.x() - self.mod_view.visualRect(index).left() > 24:
+            return False
+        self.mod_model.toggle_collapsed(mod.name)
+        return True
+
+    def _move_mods_visibly(self, up: bool) -> None:
+        """Ctrl+Up/Down: move past the neighbouring visible row (a collapsed group counts as one)."""
+        rows = sorted({i.row() for i in self.mod_view.selectionModel().selectedRows()})
+        names = [m.name for r in rows if (m := self.mod_model.mod_at(r)) and not m.is_overwrite]
+        if not names:
+            return
+        visible = [r for r in range(len(self.modlist.mods)) if not self.mod_view.isRowHidden(r, QModelIndex())]
+        if up:
+            above = [r for r in visible if r < rows[0]]
+            if not above:
+                return
+            dest = above[-1]
+        else:
+            below = [r for r in visible if r > rows[-1]]
+            if not below:
+                return
+            dest = below[0] + 1
+        self.mod_model.move_rows(rows, dest)
+        self._apply_mod_filter()
+        sel = self.mod_view.selectionModel()
+        sel.clearSelection()
+        for n in names:
+            row = self.modlist.index_of(n)
+            if row >= 0 and not self.mod_view.isRowHidden(row, QModelIndex()):
+                sel.select(self.mod_model.index(row, 0), sel.SelectionFlag.Select | sel.SelectionFlag.Rows)
+        first = self.modlist.index_of(names[0])
+        if first >= 0:
+            sel.setCurrentIndex(self.mod_model.index(first, 0), sel.SelectionFlag.NoUpdate)
+            self.mod_view.scrollTo(self.mod_model.index(first, 0))
+
     def eventFilter(self, obj, event):
+        if (event.type() == QEvent.MouseButtonPress and obj is self.mod_view.viewport()
+                and event.button() == Qt.LeftButton and self._separator_arrow_hit(event.position().toPoint())):
+            return True
+        if event.type() == QEvent.KeyPress and obj is self.mod_view and not self.busy:
+            current = self.mod_model.mod_at(self.mod_view.currentIndex().row())
+            if current is not None and current.is_separator and not event.modifiers() \
+                    and event.key() in (Qt.Key_Left, Qt.Key_Right):
+                self.mod_model.toggle_collapsed(current.name, event.key() == Qt.Key_Left)
+                return True
+            if event.key() in (Qt.Key_Up, Qt.Key_Down) and event.modifiers() & Qt.ControlModifier:
+                self._move_mods_visibly(event.key() == Qt.Key_Up)
+                return True
         if event.type() == QEvent.KeyPress and obj in (self.mod_view, self.plugin_view) and not self.busy:
             key, mods = event.key(), event.modifiers()
             view = obj

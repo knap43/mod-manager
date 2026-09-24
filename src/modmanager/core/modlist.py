@@ -184,6 +184,71 @@ class ModList:
         self.save()
         return mod
 
+    # -------------------------------------------------------------- separators
+    #
+    # A separator's group is every mod below it up to the next separator. Groups
+    # are only a view on the flat priority list, so collapsing never changes order.
+
+    def group_end(self, index: int) -> int:
+        """Index just past the last mod of the separator at ``index``."""
+        end = index + 1
+        while end < len(self.mods) and not self.mods[end].is_separator:
+            end += 1
+        return end
+
+    def group_members(self, name: str) -> list[Mod]:
+        index = self.index_of(name)
+        if index < 0 or not self.mods[index].is_separator:
+            return []
+        return self.mods[index + 1 : self.group_end(index)]
+
+    def is_collapsed(self, mod: Mod) -> bool:
+        return mod.is_separator and bool(mod.meta.get("collapsed"))
+
+    def set_collapsed(self, names: list[str], collapsed: bool) -> None:
+        for mod in self.mods:
+            if mod.name in names and mod.is_separator and self.is_collapsed(mod) != collapsed:
+                mod.meta["collapsed"] = collapsed
+                mod.save_meta()
+
+    def collapsed_rows(self) -> set[int]:
+        """Indices of mods hidden inside collapsed separators."""
+        hidden: set[int] = set()
+        for i, mod in enumerate(self.mods):
+            if self.is_collapsed(mod):
+                hidden.update(range(i + 1, self.group_end(i)))
+        return hidden
+
+    def with_collapsed_members(self, names: list[str]) -> list[str]:
+        """Names plus the members of any collapsed separator among them (they move together)."""
+        result: list[str] = []
+        for name in names:
+            result.append(name)
+            mod = self.get(name)
+            if mod is not None and self.is_collapsed(mod):
+                result += [m.name for m in self.group_members(name) if m.name not in names]
+        return list(dict.fromkeys(result))
+
+    def separator_of(self, index: int) -> Mod | None:
+        """The separator whose group contains the mod at ``index``."""
+        for i in range(index - 1, -1, -1):
+            if self.mods[i].is_separator:
+                return self.mods[i]
+        return None
+
+    def drop_index(self, dest: int) -> int:
+        """Where a drop at ``dest`` really lands: a drop line just below a collapsed
+        separator (or inside its hidden rows) means after the whole group."""
+        above = dest - 1
+        sep = above
+        while sep >= 0 and not self.mods[sep].is_separator:
+            sep -= 1
+        if sep >= 0 and self.is_collapsed(self.mods[sep]):
+            end = self.group_end(sep)
+            if above < end:
+                return end
+        return dest
+
     def rename(self, old: str, new: str) -> str:
         mod = self.get(old)
         if mod is None:
