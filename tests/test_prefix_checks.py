@@ -79,3 +79,21 @@ def test_manual_install_in_data_is_detected(env):
     target.mkdir(parents=True)
     (target / "CommunityShaders.dll").write_text("x")
     assert problem(Manager(env)) is not None
+
+
+def test_enb_in_game_folder_needs_native_d3dcompiler_43(env):
+    prefix = prefix_with(env, None)
+    (prefix / "drive_c" / "windows" / "system32" / "d3dcompiler_43.dll").write_bytes(WINE_DLL)
+
+    def enb_problem():
+        return next((p for p in Manager(env).problems() if p.key == "proton:d3dcompiler_43"), None)
+
+    assert enb_problem() is None  # no ENB installed
+    (env.game_dir / "d3d11.dll").write_bytes(b"MZ")
+    (env.game_dir / "ENBLocal.ini").write_text("[GLOBAL]\n")
+    p = enb_problem()
+    assert p is not None and p.tool == ["winetricks", "d3dcompiler_43"] and "ENBSeries" in p.title
+
+    (prefix / "drive_c" / "windows" / "system32" / "d3dcompiler_43.dll").write_bytes(NATIVE_DLL)
+    env.proton["env"] = {"WINEDLLOVERRIDES": "d3dcompiler_43=n,b"}
+    assert enb_problem() is None

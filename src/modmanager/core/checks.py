@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from modmanager.core import nexus, script_extender
+from modmanager.core import nexus, paths, script_extender
 from modmanager.core.plugins import PluginEntry, fix_master_order, is_plugin_name
 
 if TYPE_CHECKING:
@@ -321,6 +321,9 @@ class NativeDllRule:
     dll: str
     verb: str      # Winetricks verb that installs the DLL and sets the override
     why: str
+    # Game-folder files that must all exist instead (for mods installed next to the
+    # executable, such as ENB, rather than into Data).
+    game_files: tuple[str, ...] = ()
 
 
 NATIVE_DLL_RULES = (
@@ -329,6 +332,13 @@ NATIVE_DLL_RULES = (
         "Community Shaders compiles its shaders with d3dcompiler_47.dll. Proton ships Wine's own "
         "version (built on vkd3d-shader), which cannot compile them: CommunityShaders.log fills with "
         "\"syntax error, unexpected KW_NAMESPACE\" and the effects stay off.",
+    ),
+    NativeDllRule(
+        "", "ENBSeries", "d3dcompiler_43.dll", "d3dcompiler_43",
+        "ENBSeries compiles its effect files with d3dcompiler_43.dll. Proton ships Wine's own "
+        "version (built on vkd3d-shader), which rejects valid ENB shaders: the main menu lists errors "
+        "such as \"E5001: Modifiers 'static' are not allowed on struct fields\" and the effects stay off.",
+        game_files=("d3d11.dll", "enblocal.ini"),
     ),
 )
 
@@ -343,7 +353,10 @@ def _native_dll_problems(manager: "Manager", plan: set[str]) -> list[Problem]:
     env = {**os.environ, **(manager.instance.proton.get("env") or {})}
     problems: list[Problem] = []
     for rule in NATIVE_DLL_RULES:
-        if rule.trigger not in plan and not _data_has(manager, rule.trigger):
+        if rule.game_files:
+            if not all(paths.find_child_ci(manager.instance.game_dir, f) for f in rule.game_files):
+                continue
+        elif rule.trigger not in plan and not _data_has(manager, rule.trigger):
             continue
         status = proton.native_dll_status(prefix, rule.dll, env)
         if status == "ok":
@@ -358,7 +371,8 @@ def _native_dll_problems(manager: "Manager", plan: set[str]) -> list[Problem]:
             f"proton:{rule.verb}", ERROR, f"{rule.mod} needs Microsoft's {rule.dll} in the Wine prefix",
             f"{rule.why}\n\n{state}\n\nThe fix runs \"winetricks {rule.verb}\" in the game's prefix, which "
             "installs Microsoft's DLL and sets the override. If shaders still fail afterwards, delete "
-            "ShaderCache in the Overwrite folder so they are compiled again.",
+            "the shader cache (ShaderCache in Overwrite, or enbcache in the game folder) so they are "
+            "compiled again.",
             fix_label="Install with Winetricks", tool=["winetricks", rule.verb],
         ))
     return problems
