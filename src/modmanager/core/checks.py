@@ -340,6 +340,14 @@ NATIVE_DLL_RULES = (
         "such as \"E5001: Modifiers 'static' are not allowed on struct fields\" and the effects stay off.",
         game_files=("d3d11.dll", "enblocal.ini"),
     ),
+    NativeDllRule(
+        "", "ENBSeries", "d3dcompiler_47.dll", "d3dcompiler_47",
+        "ENBSeries compiles its effect files with D3DCompile2, which d3dcompiler_43.dll lacks, so the "
+        "call ends up in d3dcompiler_47.dll that Wine's own d3dx11_43 and wined3d load. Proton's "
+        "d3dcompiler_47 is built on vkd3d-shader and rejects valid ENB shaders with errors such as "
+        "\"E5001: Modifiers 'static' are not allowed on struct fields\".",
+        game_files=("d3d11.dll", "enblocal.ini"),
+    ),
 )
 
 
@@ -352,7 +360,10 @@ def _native_dll_problems(manager: "Manager", plan: set[str]) -> list[Problem]:
     prefix = Path(prefix_text).expanduser()
     env = {**os.environ, **(manager.instance.proton.get("env") or {})}
     problems: list[Problem] = []
+    reported: set[str] = set()
     for rule in NATIVE_DLL_RULES:
+        if rule.verb in reported:
+            continue  # Another mod already needs the same DLL.
         if rule.game_files:
             if not all(paths.find_child_ci(manager.instance.game_dir, f) for f in rule.game_files):
                 continue
@@ -367,6 +378,7 @@ def _native_dll_problems(manager: "Manager", plan: set[str]) -> list[Problem]:
             "no_override": f"Microsoft's {rule.dll} is in the prefix, but Wine is not told to prefer it "
                            "over its own (no \"native\" DLL override).",
         }[status]
+        reported.add(rule.verb)
         problems.append(Problem(
             f"proton:{rule.verb}", ERROR, f"{rule.mod} needs Microsoft's {rule.dll} in the Wine prefix",
             f"{rule.why}\n\n{state}\n\nThe fix runs \"winetricks {rule.verb}\" in the game's prefix, which "

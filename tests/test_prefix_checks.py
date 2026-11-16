@@ -97,3 +97,9 @@ def test_enb_in_game_folder_needs_native_d3dcompiler_43(env):
     (prefix / "drive_c" / "windows" / "system32" / "d3dcompiler_43.dll").write_bytes(NATIVE_DLL)
     env.proton["env"] = {"WINEDLLOVERRIDES": "d3dcompiler_43=n,b"}
     assert enb_problem() is None
+    # ENB's D3DCompile2 calls land in d3dcompiler_47, which must be Microsoft's too.
+    keys = {p.key for p in Manager(env).problems()}
+    assert "proton:d3dcompiler_47" in keys
+    (prefix / "drive_c" / "windows" / "system32" / "d3dcompiler_47.dll").write_bytes(NATIVE_DLL)
+    env.proton["env"] = {"WINEDLLOVERRIDES": "d3dcompiler_43,d3dcompiler_47=n,b"}
+    assert not {p.key for p in Manager(env).problems()} & {"proton:d3dcompiler_43", "proton:d3dcompiler_47"}
