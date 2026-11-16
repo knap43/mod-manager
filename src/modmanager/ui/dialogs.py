@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from modmanager.core import desktop, nexus, paths, proton, steam
+from modmanager.core import desktop, mo2, nexus, paths, proton, steam
 from modmanager.core.games import GAMES, GameDef, get_game
 from modmanager.core.installer import has_fomod, looks_like_data
 from modmanager.core.instance import DEPLOY_METHODS, Executable, Instance, InstanceRegistry, sanitize_name
@@ -213,6 +213,9 @@ class InstancePicker(QDialog):
         new.clicked.connect(self._new)
         add = QPushButton("Add existing…")
         add.clicked.connect(self._add)
+        mo2_btn = QPushButton("Import MO2…")
+        mo2_btn.setToolTip("Use a Mod Organizer 2 instance folder in place, with its mods, profiles and executables")
+        mo2_btn.clicked.connect(self._import_mo2)
         remove = QPushButton("Forget")
         remove.clicked.connect(self._remove)
         self.open_btn = QPushButton("Open")
@@ -220,7 +223,7 @@ class InstancePicker(QDialog):
         self.open_btn.clicked.connect(self._open)
 
         side = QVBoxLayout()
-        for b in (new, add, remove):
+        for b in (new, add, mo2_btn, remove):
             side.addWidget(b)
         side.addStretch(1)
         side.addWidget(self.open_btn)
@@ -259,6 +262,32 @@ class InstancePicker(QDialog):
             return
         self.registry.add(inst)
         self._fill()
+
+    def _import_mo2(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Mod Organizer 2 instance folder", str(Path.home()))
+        if not folder:
+            return
+        try:
+            info = mo2.inspect(Path(folder))
+            game_dir = info.game_dir
+            if game_dir is None:
+                chosen = QFileDialog.getExistingDirectory(self, f"{info.game.name} folder", str(Path.home()))
+                if not chosen:
+                    return
+                game_dir = Path(chosen)
+            inst = mo2.import_instance(Path(folder), game_dir)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Could not import", str(exc))
+            return
+        if info.unresolved:
+            QMessageBox.information(
+                self, "Imported",
+                "These executables were skipped because their files no longer exist:\n\n"
+                + "\n".join(info.unresolved),
+            )
+        self.registry.add(inst)
+        self.chosen = inst.path
+        self.accept()
 
     def _remove(self) -> None:
         item = self.list.currentItem()

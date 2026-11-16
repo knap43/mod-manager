@@ -69,6 +69,10 @@ through Proton with [umu-launcher](https://github.com/Open-Wine-Components/umu-l
   `d3dcompiler_47.dll` (Wine's own cannot compile its shaders), and the fix runs
   `winetricks d3dcompiler_47` in the game's prefix. Problems can be ignored
   individually. **Run** warns before starting the game with problems that crash it.
+- **Importing Mod Organizer 2 instances** (Instances › **Import MO2…**): the MO2 folder is used
+  in place, so its mods, overwrite, downloads and profiles (mod order and plugin load order) carry
+  over unchanged, and MO2 can still open it. The game folder and MO2's executables are found
+  even when `ModOrganizer.ini` holds Wine paths (`Z:\…`, `C:\…`) or the folders have moved since.
 - **Installing** from archives (zip natively; 7z/rar through 7-Zip, `bsdtar` or `unrar`)
   or folders, with automatic detection of the folder that maps onto `Data`.
   Nexus-style file names (`Name-1234-1-0-1700000000.7z`) give the mod's name,
