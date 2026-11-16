@@ -29,6 +29,8 @@ def make_plugin(path: Path, masters=(), master=False, light=False, records=(), d
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
+    # Keep host Steam installs and Proton builds out of the tests.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     game = tmp_path / "game"
     data = game / "Data"
     data.mkdir(parents=True)

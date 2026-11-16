@@ -47,6 +47,7 @@ def find_problems(manager: "Manager") -> list[Problem]:
     problems += _nexus_requirements(manager)
     problems += _loot_problems(manager, entries)
     problems += _native_dll_problems(manager, plan)
+    problems += _audio_decoder_problems(manager)
     order = {ERROR: 0, WARNING: 1}
     return sorted(problems, key=lambda p: (order.get(p.severity, 2), p.title.lower()))
 
@@ -388,3 +389,30 @@ def _native_dll_problems(manager: "Manager", plan: set[str]) -> list[Problem]:
             fix_label="Install with Winetricks", tool=["winetricks", rule.verb],
         ))
     return problems
+
+
+def _audio_decoder_problems(manager: "Manager") -> list[Problem]:
+    """Bethesda games keep music and voices in xWMA, which some Proton builds cannot decode."""
+    from modmanager.core import proton
+
+    inst = manager.instance
+    if not inst.game.has_plugins or not any(e.use_proton for e in inst.executables):
+        return []
+    build = proton.resolve_build(inst.proton)
+    if build is None:
+        return []
+    missing = proton.missing_wma_libraries(build)
+    if not missing:
+        return []
+    return [Problem(
+        f"proton:wma:{build.name.lower()}", WARNING,
+        f"{build.name} cannot play the game's music and voices",
+        f"{inst.game.name} stores music and voice lines as xWMA. Wine decodes it with "
+        f"GStreamer's libav plugin, which in {build.name} needs FFmpeg libraries the build "
+        f"does not include ({', '.join(missing)}). Started by Steam, Proton plays audio that "
+        "Steam converts in advance; started from here the music and voices stay silent while "
+        "sound effects play.\n\nChoose a GE-Proton build under Settings › Proton: it bundles "
+        "FFmpeg. Switching Proton may replace DLLs installed with Winetricks, so recheck this "
+        "list afterwards.",
+    )]
+

@@ -13,6 +13,7 @@ Steam to launch the game. It is configured through environment variables:
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 from dataclasses import dataclass
@@ -68,6 +69,47 @@ def my_games(prefix: Path) -> Path:
 
 def prefix_initialized(prefix: Path) -> bool:
     return (wine_root(prefix) / "system.reg").is_file()
+
+
+# Files Proton copies from Steam's legacycompat folder into every prefix it sets up
+# for a Steam game, so the game's Steam DRM and steam_api can reach the running
+# client. umu clears STEAM_COMPAT_CLIENT_INSTALL_PATH, so Proton skips this step
+# in prefixes Steam never touched, and such games quit right after starting.
+STEAM_CLIENT_FILES = (
+    ("steamclient.dll", "steamclient.dll"),
+    ("steamclient64.dll", "steamclient64.dll"),
+    ("GameOverlayRenderer64.dll", "GameOverlayRenderer64.dll"),
+    ("SteamService.exe", "steam.exe"),
+    ("Steam.dll", "Steam.dll"),
+)
+
+
+def steam_client_dir(prefix: Path) -> Path:
+    return wine_root(prefix) / "drive_c" / "Program Files (x86)" / "Steam"
+
+
+def install_steam_client_files(prefix: Path, steam_root: Path) -> list[str]:
+    """Copy Steam's client files into the prefix as Proton does; return the names copied."""
+    src_dir = steam_root / "legacycompat"
+    dst_dir = steam_client_dir(prefix)
+    copied: list[str] = []
+    for src_name, dst_name in STEAM_CLIENT_FILES:
+        src = src_dir / src_name
+        if not src.is_file():
+            continue
+        dst = dst_dir / dst_name
+        try:
+            if dst.is_file() and dst.stat().st_size == src.stat().st_size \
+                    and dst.stat().st_mtime >= src.stat().st_mtime:
+                continue
+        except OSError:
+            pass
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        if dst.is_symlink():
+            dst.unlink()
+        shutil.copy2(src, dst)
+        copied.append(dst_name)
+    return copied
 
 
 # Wine marks its own PE files in the DOS header area; Microsoft's DLLs have no such text.
@@ -207,3 +249,48 @@ def build_tool(proton_cfg: dict, tool: str, args: list[str] | None = None) -> La
     spec.argv = [spec.argv[0], tool, *(args or [])]
     spec.cwd = str(Path.home())
     return spec
+
+
+def resolve_build(proton_cfg: dict, search_dirs: list[Path] | None = None) -> Path | None:
+    """The Proton build umu will run: the configured folder, or the newest installed
+    GE-Proton / UMU-Proton when ``PROTONPATH`` is "GE-Proton" or unset."""
+    configured = (proton_cfg.get("proton_path") or "").strip()
+    if configured and configured != "GE-Proton":
+        path = Path(configured).expanduser()
+        return path if (path / "proton").is_file() else None
+    stem = "GE-Proton" if configured else "UMU-Proton"
+    if search_dirs is None:
+        from modmanager.core import steam
+        search_dirs = [r / "compatibilitytools.d" for r in steam.steam_roots()]
+        xdg = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+        search_dirs.append(xdg / "umu" / "compatibilitytools")
+    found = [
+        d for base in search_dirs if base.is_dir()
+        for d in base.iterdir() if d.name.startswith(stem) and (d / "proton").is_file()
+    ]
+
+    def version_key(path: Path) -> list[int]:
+        return [int(n) for n in re.findall(r"\d+", path.name)]
+
+    return max(found, key=version_key) if found else None
+
+
+_FFMPEG_LIB = re.compile(rb"lib(?:av[a-z]+|swresample|swscale|postproc)\.so\.\d+")
+
+
+def missing_wma_libraries(build: Path) -> list[str]:
+    """FFmpeg libraries the build's GStreamer libav plugin needs but the build lacks.
+
+    Wine decodes xWMA (Bethesda games' music and voice files) with that plugin.
+    Valve's Proton and UMU-Proton ship the plugin without FFmpeg, relying on audio
+    Steam converts in advance, which a launch outside Steam never gets.
+    """
+    lib_dir = build / "files" / "lib" / "x86_64-linux-gnu"
+    plugin = lib_dir / "gstreamer-1.0" / "libgstlibav.so"
+    try:
+        data = plugin.read_bytes()
+    except OSError:
+        return []  # No such plugin: the build decodes audio some other way.
+    needed = sorted({m.decode() for m in _FFMPEG_LIB.findall(data)})
+    return [name for name in needed if not (lib_dir / name).exists()]
+

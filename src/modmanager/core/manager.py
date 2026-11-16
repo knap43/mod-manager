@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from pathlib import Path
 from struct import error as struct_error
 
-from modmanager.core import checks, fomod, paths, proton, script_extender
+from modmanager.core import checks, fomod, paths, proton, script_extender, steam
 from modmanager.core.deploy import Deployer, DeployResult, ProgressFn
+from modmanager.core.games import detect_store
 from modmanager.core.instance import Executable, Instance
 from modmanager.core.modlist import ModList
 from modmanager.core.plugins import PluginEntry, assign_load_indices, fix_master_order, is_plugin_name
@@ -294,6 +296,38 @@ class Manager:
         return script_extender.plugin_dlls(set(self.modlist.deployment_plan()), se)
 
     # ---------------------------------------------------------------- running
+
+    def needs_steam_client(self, exe: Executable) -> bool:
+        """Whether ``exe`` runs a Steam copy of the game through Proton."""
+        game = self.instance.game
+        return bool(
+            exe.use_proton and game.steam_app_id
+            and detect_store(self.instance.game_dir) == "steam"
+        )
+
+    def prepare_steam_client(self, exe: Executable) -> list[str]:
+        """Give the prefix the Steam client files the game's Steam DRM needs.
+
+        Proton only copies them when Steam starts the game; through umu a prefix
+        of our own never gets them and the game quits as soon as it starts. A new
+        prefix is created first (``wineboot``) so Proton sets it up as usual.
+        """
+        if not self.needs_steam_client(exe):
+            return []
+        root = next((r for r in steam.steam_roots() if (r / "legacycompat").is_dir()), None)
+        if root is None:
+            log.warning("Steam's legacycompat folder was not found; the game may not start")
+            return []
+        prefix = Path(self.instance.proton.get("prefix") or "").expanduser()
+        if not proton.prefix_initialized(prefix):
+            log.info("Creating the Wine prefix %s", prefix)
+            spec = proton.build_tool(self.instance.proton, "wineboot", ["-u"])
+            subprocess.run(spec.argv, env=spec.env, cwd=spec.cwd, check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        copied = proton.install_steam_client_files(prefix, root)
+        if copied:
+            log.info("Copied Steam client files into the prefix: %s", ", ".join(copied))
+        return copied
 
     def launch_spec(self, exe: Executable) -> proton.LaunchSpec:
         extra: dict[str, str] = {}

@@ -35,7 +35,9 @@ through Proton with [umu-launcher](https://github.com/Open-Wine-Components/umu-l
   or Steam's own), the Proton build (UMU-Proton, latest GE-Proton, or any detected
   build), `GAMEID`/`STORE` and extra environment variables. `winecfg` and
   Winetricks run in the same prefix. **Run** deploys, writes `plugins.txt` into the
-  prefix, starts the program and streams its output to the log.
+  prefix, starts the program and streams its output to the log. For Steam copies of a
+  game it first puts Steam's client files into the prefix, as Proton does only when Steam
+  starts the game; without them the game's Steam DRM quits it straight away.
 - **FOMOD installers** (`fomod/ModuleConfig.xml`): a step-by-step wizard with option
   images and descriptions, all group types, condition flags, steps that appear or
   disappear depending on earlier answers, options whose type depends on your installed
@@ -67,7 +69,10 @@ through Proton with [umu-launcher](https://github.com/Open-Wine-Components/umu-l
   listed on Nexus Mods that are not installed or disabled. Under Proton it also
   catches mods that need a real Windows DLL: Community Shaders needs Microsoft's
   `d3dcompiler_47.dll` (Wine's own cannot compile its shaders), and the fix runs
-  `winetricks d3dcompiler_47` in the game's prefix. Problems can be ignored
+  `winetricks d3dcompiler_47` in the game's prefix; ENB needs Microsoft's `d3dcompiler_43` and
+  `d3dcompiler_47` alike. It also warns when the chosen Proton build cannot decode the xWMA
+  music and voice files of Bethesda games (UMU-Proton and Valve's Proton lack the FFmpeg
+  libraries for it outside Steam; GE-Proton bundles them). Problems can be ignored
   individually. **Run** warns before starting the game with problems that crash it.
 - **Importing Mod Organizer 2 instances** (Instances › **Import MO2…**): the MO2 folder is used
   in place, so its mods, overwrite, downloads and profiles (mod order and plugin load order) carry

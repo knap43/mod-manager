@@ -1088,6 +1088,7 @@ class MainWindow(QMainWindow):
 
         def work(progress):
             result = self.manager.deploy(progress)
+            self.manager.prepare_steam_client(exe)
             before = self.manager.snapshot_data()
             return result, before, self.manager.launch_spec(exe)
 
