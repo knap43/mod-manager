@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from modmanager.core import paths
-from modmanager.core.fomod import pe_file_version
+from modmanager.core.fomod import game_exe_version, pe_file_version
 from modmanager.core.games import GameDef, ScriptExtender
 
 Version = tuple[int, ...]
@@ -86,7 +86,7 @@ def check(game: GameDef, game_dir: Path) -> ScriptExtenderStatus | None:
         return None
     status = ScriptExtenderStatus(se)
     binary = paths.find_child_ci(game_dir, game.binary) if game.binary else None
-    status.game_version = pe_file_version(binary) if binary else None
+    status.game_version = game_exe_version(binary) if binary else None
     status.loader = paths.find_child_ci(game_dir, se.loader)
     if status.loader is None:
         return status

@@ -259,7 +259,7 @@ class Manager:
         se = self.script_extender_status(refresh=True)
         binary = self.instance.game.binary
         exe = paths.find_child_ci(self.instance.game_dir, binary) if binary else None
-        version = se.game_version if se else (fomod.pe_file_version(exe) if exe else None)
+        version = se.game_version if se else (fomod.game_exe_version(exe) if exe else None)
         return fomod.FomodContext(file_state=state, game_version=version,
                                   script_extender_version=se.version if se and se.installed else None)
 

@@ -55,3 +55,15 @@ def test_executable_added_once_and_plugins_found(env):
     assert mgr.enabled_script_extender_plugins() == []
     mgr.modlist.set_enabled(["Engine Fixes"], True)
     assert mgr.enabled_script_extender_plugins() == ["skse/plugins/enginefixes.dll"]
+
+
+def test_game_version_prefers_product_version_string(tmp_path):
+    # Skyrim SE 1.5.97 says 1.0.0.0 in VS_FIXEDFILEINFO; SKSE goes by the ProductVersion string.
+    game = tmp_path
+    fake_exe(game / "SkyrimSE.exe", (1, 0, 0, 0))
+    with open(game / "SkyrimSE.exe", "ab") as fh:
+        fh.write("ProductVersion\0".encode("utf-16-le") + b"\0\0" + "1.5.97.0\0".encode("utf-16-le"))
+    fake_exe(game / "skse64_loader.exe", (0, 2, 0, 20))
+    (game / "skse64_1_5_97.dll").write_bytes(b"MZ")
+    st = script_extender.check(get_game("skyrimse"), game)
+    assert st.game_version == (1, 5, 97, 0) and st.compatible

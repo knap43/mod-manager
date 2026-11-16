@@ -601,3 +601,37 @@ def pe_file_version(path: Path) -> tuple[int, ...] | None:
     except (OSError, ValueError):
         return None
     return None
+
+
+_VERSION_STRING = re.compile(r"\s*(\d+)\s*[.,]\s*(\d+)\s*[.,]\s*(\d+)(?:\s*[.,]\s*(\d+))?")
+
+
+def pe_product_version(path: Path) -> tuple[int, ...] | None:
+    """Read the ProductVersion string from a Windows executable's StringFileInfo."""
+    try:
+        with open(path, "rb") as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            start = mm.find("VS_VERSION_INFO".encode("utf-16-le"))
+            if start == -1:
+                return None
+            key = "ProductVersion\0".encode("utf-16-le")
+            pos = mm.find(key, start, start + 0x4000)
+            if pos == -1:
+                return None
+            raw = mm[pos + len(key):pos + len(key) + 96]
+    except (OSError, ValueError):
+        return None
+    text = raw.decode("utf-16-le", errors="replace").lstrip("\0").split("\0", 1)[0]
+    m = _VERSION_STRING.match(text)
+    if not m:
+        return None
+    return tuple(int(g) for g in m.groups(default="0"))
+
+
+def game_exe_version(path: Path) -> tuple[int, ...] | None:
+    """The version a game executable reports, as script extenders read it.
+
+    SKSE identifies the runtime by the ProductVersion string; some executables
+    (Skyrim SE 1.5.97 among them) carry a different, generic value such as
+    1.0.0.0 in VS_FIXEDFILEINFO, so the string is preferred.
+    """
+    return pe_product_version(path) or pe_file_version(path)
